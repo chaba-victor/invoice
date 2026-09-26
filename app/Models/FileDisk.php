@@ -5,6 +5,7 @@ namespace Crater\Models;
 use Crater\Carbon;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Arr;
 
 class FileDisk extends Model
 {
@@ -80,6 +81,14 @@ class FileDisk extends Model
         $driver = $this->driver;
 
         $credentials = collect(json_decode($this['credentials']));
+
+        // System disks were saved with the absolute paths and URL of the install that created them.
+        // Always use this install's, so a moved or restored data directory keeps working.
+        if ($this->isSystem()) {
+            $current = config($this->name === 'local_public' ? 'filesystems.disks.public' : 'filesystems.disks.local');
+
+            $credentials = $credentials->merge(Arr::only($current, ['root', 'url']));
+        }
 
         self::setFilesystem($credentials, $driver);
     }

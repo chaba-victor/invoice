@@ -22,7 +22,7 @@ class EnvironmentManager
      */
     public function __construct()
     {
-        $this->envPath = base_path('.env');
+        $this->envPath = app()->environmentFilePath();
     }
 
     /**

@@ -17,6 +17,49 @@ $app = new Illuminate\Foundation\Application(
 
 /*
 |--------------------------------------------------------------------------
+| Desktop Data Directory
+|--------------------------------------------------------------------------
+|
+| The desktop app installs the code read-only and passes INVOICE_DATA_DIR,
+| a per-user directory that holds everything the app writes: .env, the
+| storage directory and Laravel's bootstrap caches. Without it, the app
+| keeps its usual layout.
+|
+*/
+
+if ($dataDir = getenv('INVOICE_DATA_DIR')) {
+    $dataDir = rtrim($dataDir, '\\/');
+
+    foreach ([
+        'cache',
+        'storage/app/public',
+        'storage/framework/cache/data',
+        'storage/framework/sessions',
+        'storage/framework/views',
+        'storage/fonts',
+        'storage/logs',
+    ] as $dir) {
+        if (! is_dir($dataDir.'/'.$dir)) {
+            mkdir($dataDir.'/'.$dir, 0755, true);
+        }
+    }
+
+    $app->useStoragePath($dataDir.'/storage');
+    $app->useEnvironmentPath($dataDir);
+
+    foreach ([
+        'APP_CONFIG_CACHE' => 'config.php',
+        'APP_ROUTES_CACHE' => 'routes-v7.php',
+        'APP_SERVICES_CACHE' => 'services.php',
+        'APP_PACKAGES_CACHE' => 'packages.php',
+        'APP_EVENTS_CACHE' => 'events.php',
+    ] as $key => $file) {
+        $_ENV[$key] = $_SERVER[$key] = $dataDir.'/cache/'.$file;
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
 | Bind Important Interfaces
 |--------------------------------------------------------------------------
 |

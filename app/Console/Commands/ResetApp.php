@@ -53,7 +53,7 @@ class ResetApp extends Command
 
         Artisan::call('db:seed', ['--class' => 'DemoSeeder', '--force' => true]);
 
-        $path = base_path('.env');
+        $path = app()->environmentFilePath();
 
         if (file_exists($path)) {
             file_put_contents($path, str_replace(

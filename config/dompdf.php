@@ -71,7 +71,9 @@ return [
          * direct class use like:
          * $dompdf = new DOMPDF();	$dompdf->load_html($htmldata); $dompdf->render(); $pdfdata = $dompdf->output();
          */
-        "chroot" => realpath(base_path()),
+        // The storage path is listed too: company logos live there, and the desktop app keeps it
+        // outside the install directory.
+        "chroot" => array_values(array_filter([realpath(base_path()), realpath(storage_path())])),
 
         /**
          * Whether to enable font subsetting or not.

@@ -17,6 +17,7 @@ use Crater\Http\Controllers\V1\PDF\DownloadReceiptController;
 use Crater\Http\Controllers\V1\PDF\EstimatePdfController;
 use Crater\Http\Controllers\V1\PDF\InvoicePdfController;
 use Crater\Http\Controllers\V1\PDF\PaymentPdfController;
+use Crater\Http\Controllers\V1\Storage\PublicStorageController;
 use Crater\Models\Company;
 use Illuminate\Support\Facades\Route;
 
@@ -26,6 +27,12 @@ use Illuminate\Support\Facades\Route;
 Route::get('/modules/styles/{style}', StyleController::class);
 
 Route::get('/modules/scripts/{script}', ScriptController::class);
+
+
+// Public Storage (desktop installs have no public/storage symlink)
+// ----------------------------------------------
+
+Route::get('/storage/{path}', PublicStorageController::class)->where('path', '.*');
 
 
 // Admin Auth

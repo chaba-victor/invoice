@@ -4,7 +4,7 @@
 with no internet connection and no Docker. Everything (UI, API, database, PDFs) runs on the
 user's machine.
 
-**Last updated:** 2026-09-26 · **Current phase:** 3 — next up
+**Last updated:** 2026-09-26 · **Current phase:** 4 — next up
 
 ## How to use this document
 
@@ -124,23 +124,41 @@ on network error.
 - **Note:** browsers that ran the earlier build keep an orphaned `InvoiceOfflineDB` IndexedDB (cached
   customers/items). Irrelevant to the desktop app (new origin); clear it manually in any dev browser.
 
-## Phase 3 — Make Laravel run from a read-only install dir ⬜
+## Phase 3 — Make Laravel run from a read-only install dir ✅
 
 Everything writable moves to the user-data dir, passed in by Electron as `INVOICE_DATA_DIR`.
 
-- [ ] `bootstrap/app.php`: if `INVOICE_DATA_DIR` is set, `useStoragePath(<data>/storage)` and
-      `useEnvironmentPath(<data>)`.
-- [ ] Bootstrap caches: Electron sets `APP_CONFIG_CACHE`, `APP_ROUTES_CACHE`, `APP_SERVICES_CACHE`,
-      `APP_PACKAGES_CACHE`, `APP_EVENTS_CACHE` to `<data>/cache/*.php`.
-- [ ] `app/Space/EnvironmentManager.php`: write to `app()->environmentFilePath()` instead of `base_path('.env')`.
-- [ ] SQLite: `DB_CONNECTION=sqlite`, `DB_DATABASE=<data>/database.sqlite`; enable WAL + `foreign_keys`.
-- [ ] dompdf: `font_dir`/`font_cache` already use `storage_path('fonts/')`; first run copies the bundled
-      `storage/fonts/*` into the user storage dir.
-- [ ] `public/storage` symlink: replace with a route or `php -S` router rule that serves
-      `<data>/storage/app/public` (symlinks in the install dir aren't reliable on Windows).
-- [ ] Verify **all migrations and seeders run on SQLite** from an empty DB (Crater supports SQLite, but check
-      any custom migrations).
+- [x] `bootstrap/app.php`: if `INVOICE_DATA_DIR` is set, `useStoragePath(<data>/storage)` and
+      `useEnvironmentPath(<data>)`, and create the storage/cache directories if missing.
+- [x] Bootstrap caches: `APP_CONFIG_CACHE`, `APP_ROUTES_CACHE`, `APP_SERVICES_CACHE`,
+      `APP_PACKAGES_CACHE`, `APP_EVENTS_CACHE` point to `<data>/cache/*.php`. Set in `bootstrap/app.php`
+      rather than by Electron, so the web server, `artisan` and the scheduler all agree; Electron only
+      passes `INVOICE_DATA_DIR`. `config:cache` and `route:cache` both work (closure routes included).
+- [x] `app/Space/EnvironmentManager.php`: write to `app()->environmentFilePath()` instead of `base_path('.env')`.
+      Same for the `ResetApp` command.
+- [x] SQLite: `DB_CONNECTION=sqlite`, `DB_DATABASE=<data>/database.sqlite`. `CraterDatabaseSQLiteConnector`
+      (bound as `db.connector.sqlite`) sets `busy_timeout` (default 5000 ms, `DB_BUSY_TIMEOUT`) and WAL on
+      every connection — web server and scheduler are separate processes on one file.
+- [x] **Foreign keys were off on SQLite.** Crater's `sqlite` config lacked `foreign_key_constraints`, so its
+      `onDelete('cascade')` rules (always enforced on MySQL) would silently not run. Now on by default
+      (`DB_FOREIGN_KEYS`). All migrations + seeders pass with it on; Pest suite 248/248 with it on and off.
+- [x] dompdf: no font copying needed — `storage/fonts` only holds metric caches dompdf regenerates, and the
+      Thai fonts load from `resources/static/fonts` (read-only is fine). **`chroot` was the real issue:** it
+      only allowed the install dir, which would have silently dropped company logos from PDFs once storage
+      moved. Now `[base_path(), storage_path()]`.
+- [x] System file disks (`local_public`, `local_private`): Crater stores their absolute root and `APP_URL`
+      in the database at migration time. `FileDisk::setConfig()` now takes `root`/`url` from the current
+      config for system disks, so a moved/restored data dir or a changed port keeps working.
+- [x] `public/storage` symlink: replaced by `GET /storage/{path}` (`PublicStorageController`), which serves
+      `storage/app/public` and 404s anything resolving outside it. Web installs with the symlink never
+      reach it (the web server answers first).
+- [x] `php artisan desktop:provision`: creates the SQLite file if missing. Phase 6 extends it.
+- [x] Verify **all migrations and seeders run on SQLite** from an empty DB.
 - **Done when:** app runs with the source tree made read-only and all state in a temp `INVOICE_DATA_DIR`.
+- **Result:** container with the project mounted **read-only**, `INVOICE_DATA_DIR` on tmpfs, SQLite and
+  `php -S`: provision → migrate/seed → config/route cache → login → logo upload (served via `/storage/…`,
+  traversal attempts 404) → customer + invoice → invoice PDF with the logo embedded. Every write landed in
+  the data dir; no errors logged. Docker web install unaffected.
 
 ## Phase 4 — Bundle the PHP runtime and the app ⬜
 
@@ -163,13 +181,18 @@ Everything writable moves to the user-data dir, passed in by Electron as `INVOIC
       generate `APP_KEY` (Node `crypto.randomBytes(32)`).
 - [ ] Every launch: copy `database.sqlite` to `backups/pre-migrate-<version>-<timestamp>.sqlite`
       (keep last 5), then `php artisan migrate --force`, then `config:cache` / `route:cache`.
-- [ ] Start PHP server (`php -S 127.0.0.1:<port> server.php`, cwd = app dir); poll until it answers; then load `/admin`.
+- [ ] Run `php artisan desktop:provision` before the backup/migrate step.
+- [ ] Start PHP server (`php -S 127.0.0.1:<port> -t public server.php`, cwd = app dir; `-t public` is needed so
+      static files resolve); poll until it answers; then load `/admin`.
 - [ ] Update `APP_URL` / `SANCTUM_STATEFUL_DOMAINS` in `.env` if the fallback port is used.
 - [ ] Scheduler: run `php artisan schedule:run` every 60 s while the app is open (replaces the Docker cron container).
 - [ ] Shutdown: kill PHP process tree on quit (`taskkill /pid <pid> /T /F` on Windows); handle PHP crash → offer restart.
 - [ ] Security: `webSecurity: true`, `contextIsolation: true`, `sandbox: true`; `setWindowOpenHandler` →
       `shell.openExternal` for non-local URLs; block `will-navigate` away from the local origin.
 - [ ] Downloads: PDFs and backups go through a native save dialog (`will-download`). Printing via `webContents.print()`.
+      Note: Crater's PDF routes return a body starting with `HTTP/1.0 200 OK…` headers before `%PDF`
+      (`GeneratesPdfTrait` wraps a Response in a response — upstream behaviour). Viewers tolerate it;
+      saved files should be clean, so fix the trait when doing downloads.
 - [ ] Logs: Electron log + PHP stdout/stderr to `<data>/storage/logs/desktop.log`.
 
 ## Phase 6 — First-run setup flow ⬜
@@ -277,3 +300,4 @@ Out of scope. Notes to carry forward:
 | 2026-09-26 | 0 | Git repo initialised, baseline commit, `.gitignore` updated, baseline sizes recorded. |
 | 2026-09-26 | 1 | Vite config restored (`base`, `publicDir`), root-relative image URLs fixed, double `Crater.start()` removed, static `index.html` + NativePHP leftovers + `laravel-vite` npm package removed. Verified in Docker web app. |
 | 2026-09-26 | 2 | Offline layer removed (stores/auth/login/header restored to upstream, offline modules + `dexie` deleted, service worker retired). Create/edit flows verified for customer, item, invoice, estimate. |
+| 2026-09-26 | 3 | Data-dir support in `bootstrap/app.php`, SQLite connector (WAL, busy timeout) + foreign keys enabled, dompdf `chroot` includes storage, system file disks use current paths, `/storage` route, `desktop:provision`. Verified with read-only code in Docker; Pest 248/248. |
