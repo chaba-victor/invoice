@@ -22,32 +22,24 @@ export const useAuthStore = (useWindow = false) => {
     actions: {
       login(data) {
         return new Promise((resolve, reject) => {
-          axios
-            .get('/sanctum/csrf-cookie')
-            .then((response) => {
+          axios.get('/sanctum/csrf-cookie').then((response) => {
+            if (response) {
               axios
                 .post('/login', data)
-                .then((res) => {
-                  resolve(res)
+                .then((response) => {
+                  resolve(response)
+
                   setTimeout(() => {
                     this.loginData.email = ''
                     this.loginData.password = ''
                   }, 1000)
                 })
                 .catch((err) => {
-                  if (err.response) {
-                    handleError(err)
-                    reject(err)
-                  } else {
-                    console.warn('Network offline during login request, authorizing offline desktop session')
-                    resolve({ data: { success: true } })
-                  }
+                  handleError(err)
+                  reject(err)
                 })
-            })
-            .catch((err) => {
-              console.warn('Network offline during CSRF cookie request, authorizing offline desktop session')
-              resolve({ data: { success: true } })
-            })
+            }
+          })
         })
       },
 

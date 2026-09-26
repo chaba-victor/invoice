@@ -133,10 +133,6 @@
         />
       </li>
 
-      <li class="flex items-center ml-2">
-        <OfflineStatusBadge />
-      </li>
-
       <li>
         <CompanySwitcher />
       </li>
@@ -186,7 +182,6 @@ import { useGlobalStore } from '@/scripts/admin/stores/global'
 import CompanySwitcher from '@/scripts/components/CompanySwitcher.vue'
 import GlobalSearchBar from '@/scripts/components/GlobalSearchBar.vue'
 import MainLogo from '@/scripts/components/icons/MainLogo.vue'
-import OfflineStatusBadge from '@/scripts/components/offline/OfflineStatusBadge.vue'
 
 import abilities from '@/scripts/admin/stub/abilities'
 

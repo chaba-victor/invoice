@@ -44,18 +44,8 @@ export const useUserStore = (useWindow = false) => {
               resolve(response)
             })
             .catch((err) => {
-              if (err.response) {
-                handleError(err)
-                reject(err)
-              } else {
-                Object.assign(this.currentUser, data)
-                const notificationStore = useNotificationStore()
-                notificationStore.showNotification({
-                  type: 'success',
-                  message: 'Account settings updated (offline mode).',
-                })
-                resolve({ data: { data: this.currentUser } })
-              }
+              handleError(err)
+              reject(err)
             })
         })
       },

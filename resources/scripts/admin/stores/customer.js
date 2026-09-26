@@ -7,8 +7,6 @@ import { useGlobalStore } from '@/scripts/admin/stores/global'
 import { useCompanyStore } from '@/scripts/admin/stores/company'
 import addressStub from '@/scripts/admin/stub/address.js'
 import customerStub from '@/scripts/admin/stub/customer'
-import db from '@/scripts/services/offline/database'
-import syncManager from '@/scripts/services/offline/syncManager'
 
 export const useCustomerStore = (useWindow = false) => {
   const defineStoreFunc = useWindow ? window.pinia.defineStore : defineStore
@@ -77,33 +75,16 @@ export const useCustomerStore = (useWindow = false) => {
 
       fetchCustomers(params) {
         return new Promise((resolve, reject) => {
-          if (!navigator.onLine) {
-            db.customers.toArray().then((localCustomers) => {
-              this.customers = localCustomers || []
-              this.totalCustomers = this.customers.length
-              resolve({ data: { data: this.customers, meta: { customer_total_count: this.customers.length } } })
-            }).catch((err) => reject(err))
-            return
-          }
-
           axios
             .get(`/api/v1/customers`, { params })
             .then((response) => {
               this.customers = response.data.data
               this.totalCustomers = response.data.meta.customer_total_count
-              syncManager.cacheCustomersLocally(response.data.data)
               resolve(response)
             })
-            .catch(async (err) => {
-              const localCustomers = await db.customers.toArray()
-              if (localCustomers && localCustomers.length > 0) {
-                this.customers = localCustomers
-                this.totalCustomers = localCustomers.length
-                resolve({ data: { data: localCustomers, meta: { customer_total_count: localCustomers.length } } })
-              } else {
-                handleError(err)
-                reject(err)
-              }
+            .catch((err) => {
+              handleError(err)
+              reject(err)
             })
         })
       },
@@ -139,56 +120,19 @@ export const useCustomerStore = (useWindow = false) => {
               this.setAddressStub(response.data.data)
               resolve(response)
             })
-            .catch(async (err) => {
-              const localCustomer = await db.customers.get(parseInt(id) || id)
-              if (localCustomer) {
-                Object.assign(this.currentCustomer, localCustomer)
-                this.setAddressStub(localCustomer)
-                resolve({ data: { data: localCustomer } })
-              } else {
-                handleError(err)
-                reject(err)
-              }
+            .catch((err) => {
+              handleError(err)
+              reject(err)
             })
         })
       },
 
       addCustomer(data) {
         return new Promise((resolve, reject) => {
-          if (!navigator.onLine) {
-            const localId = Date.now()
-            const offlineCustomer = {
-              ...data,
-              id: localId,
-              _localId: localId,
-              sync_status: 'pending',
-              created_at: new Date().toISOString(),
-            }
-
-            db.customers.put(offlineCustomer)
-            db.outbox.add({
-              type: 'CREATE_CUSTOMER',
-              payload: offlineCustomer,
-              createdAt: Date.now(),
-              status: 'pending',
-            })
-
-            this.customers.push(offlineCustomer)
-
-            const notificationStore = useNotificationStore()
-            notificationStore.showNotification({
-              type: 'success',
-              message: 'Customer created offline! It will sync when back online.',
-            })
-            resolve({ data: { data: offlineCustomer } })
-            return
-          }
-
           axios
             .post('/api/v1/customers', data)
             .then((response) => {
               this.customers.push(response.data.data)
-              syncManager.cacheCustomersLocally([response.data.data])
 
               const notificationStore = useNotificationStore()
               notificationStore.showNotification({
@@ -198,37 +142,9 @@ export const useCustomerStore = (useWindow = false) => {
               resolve(response)
             })
 
-            .catch(async (err) => {
-              if (!navigator.onLine || err.message === 'Network Error') {
-                const localId = Date.now()
-                const offlineCustomer = {
-                  ...data,
-                  id: localId,
-                  _localId: localId,
-                  sync_status: 'pending',
-                  created_at: new Date().toISOString(),
-                }
-
-                await db.customers.put(offlineCustomer)
-                await db.outbox.add({
-                  type: 'CREATE_CUSTOMER',
-                  payload: offlineCustomer,
-                  createdAt: Date.now(),
-                  status: 'pending',
-                })
-
-                this.customers.push(offlineCustomer)
-
-                const notificationStore = useNotificationStore()
-                notificationStore.showNotification({
-                  type: 'success',
-                  message: 'Customer saved offline. Will sync when back online.',
-                })
-                resolve({ data: { data: offlineCustomer } })
-              } else {
-                handleError(err)
-                reject(err)
-              }
+            .catch((err) => {
+              handleError(err)
+              reject(err)
             })
         })
       },

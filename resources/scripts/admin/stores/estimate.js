@@ -14,8 +14,6 @@ import estimateStub from '../stub/estimate'
 import estimateItemStub from '../stub/estimate-item'
 import taxStub from '../stub/tax'
 import { useUserStore } from './user'
-import db from '@/scripts/services/offline/database'
-import syncManager from '@/scripts/services/offline/syncManager'
 
 export const useEstimateStore = (useWindow = false) => {
   const defineStoreFunc = useWindow ? window.pinia.defineStore : defineStore
@@ -109,35 +107,16 @@ export const useEstimateStore = (useWindow = false) => {
 
       fetchEstimates(params) {
         return new Promise((resolve, reject) => {
-          if (!navigator.onLine) {
-            db.estimates.toArray().then((localEstimates) => {
-              this.estimates = localEstimates || []
-              this.totalEstimateCount = this.estimates.length
-              resolve({ data: { data: this.estimates, meta: { estimate_total_count: this.estimates.length } } })
-            }).catch((err) => reject(err))
-            return
-          }
-
           axios
             .get(`/api/v1/estimates`, { params })
             .then((response) => {
               this.estimates = response.data.data
               this.totalEstimateCount = response.data.meta.estimate_total_count
-              if (Array.isArray(response.data.data)) {
-                db.estimates.bulkPut(response.data.data.map(e => ({ ...e, sync_status: 'synced' })))
-              }
               resolve(response)
             })
-            .catch(async (err) => {
-              const localEstimates = await db.estimates.toArray()
-              if (localEstimates && localEstimates.length > 0) {
-                this.estimates = localEstimates
-                this.totalEstimateCount = localEstimates.length
-                resolve({ data: { data: localEstimates, meta: { estimate_total_count: localEstimates.length } } })
-              } else {
-                handleError(err)
-                reject(err)
-              }
+            .catch((err) => {
+              handleError(err)
+              reject(err)
             })
         })
       },
@@ -167,15 +146,9 @@ export const useEstimateStore = (useWindow = false) => {
               Object.assign(this.newEstimate, response.data.data)
               resolve(response)
             })
-            .catch(async (err) => {
-              const localEst = await db.estimates.get(parseInt(id) || id)
-              if (localEst) {
-                Object.assign(this.newEstimate, localEst)
-                resolve({ data: { data: localEst } })
-              } else {
-                handleError(err)
-                reject(err)
-              }
+            .catch((err) => {
+              handleError(err)
+              reject(err)
             })
         })
       },
@@ -219,41 +192,10 @@ export const useEstimateStore = (useWindow = false) => {
 
       addEstimate(data) {
         return new Promise((resolve, reject) => {
-          if (!navigator.onLine) {
-            const localId = Date.now()
-            const offlineEstimate = {
-              ...data,
-              id: localId,
-              _localId: localId,
-              sync_status: 'pending',
-              created_at: new Date().toISOString(),
-            }
-
-            db.estimates.put(offlineEstimate)
-            db.outbox.add({
-              type: 'CREATE_ESTIMATE',
-              payload: offlineEstimate,
-              createdAt: Date.now(),
-              status: 'pending',
-            })
-
-            this.estimates = [offlineEstimate, ...this.estimates]
-
-            const notificationStore = useNotificationStore()
-            notificationStore.showNotification({
-              type: 'success',
-              message: 'Estimate created offline! It will sync when back online.',
-            })
-
-            resolve({ data: { estimate: offlineEstimate } })
-            return
-          }
-
           axios
             .post('/api/v1/estimates', data)
             .then((response) => {
               this.estimates = [...this.estimates, response.data.estimate]
-              db.estimates.put({ ...response.data.estimate, sync_status: 'synced' })
               const notificationStore = useNotificationStore()
 
               notificationStore.showNotification({
@@ -263,38 +205,9 @@ export const useEstimateStore = (useWindow = false) => {
 
               resolve(response)
             })
-            .catch(async (err) => {
-              if (!navigator.onLine || err.message === 'Network Error') {
-                const localId = Date.now()
-                const offlineEstimate = {
-                  ...data,
-                  id: localId,
-                  _localId: localId,
-                  sync_status: 'pending',
-                  created_at: new Date().toISOString(),
-                }
-
-                await db.estimates.put(offlineEstimate)
-                await db.outbox.add({
-                  type: 'CREATE_ESTIMATE',
-                  payload: offlineEstimate,
-                  createdAt: Date.now(),
-                  status: 'pending',
-                })
-
-                this.estimates = [offlineEstimate, ...this.estimates]
-
-                const notificationStore = useNotificationStore()
-                notificationStore.showNotification({
-                  type: 'success',
-                  message: 'Estimate saved offline. Will sync when back online.',
-                })
-
-                resolve({ data: { estimate: offlineEstimate } })
-              } else {
-                handleError(err)
-                reject(err)
-              }
+            .catch((err) => {
+              handleError(err)
+              reject(err)
             })
         })
       },

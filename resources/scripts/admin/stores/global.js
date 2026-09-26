@@ -86,39 +86,8 @@ export const useGlobalStore = (useWindow = false) => {
               resolve(response)
             })
             .catch((err) => {
-              console.warn('Bootstrap API unreachable, initializing offline state', err)
-              const companyStore = useCompanyStore()
-              const userStore = useUserStore()
-              const moduleStore = useModuleStore()
-
-              this.mainMenu = [
-                { title: 'navigation.dashboard', link: '/admin/dashboard', icon: 'LayoutDashboardIcon', group: 'general' },
-                { title: 'navigation.customers', link: '/admin/customers', icon: 'UsersIcon', group: 'general' },
-                { title: 'navigation.items', link: '/admin/items', icon: 'PackageIcon', group: 'general' },
-                { title: 'navigation.invoices', link: '/admin/invoices', icon: 'DocumentTextIcon', group: 'general' },
-                { title: 'navigation.estimates', link: '/admin/estimates', icon: 'DocumentCheckIcon', group: 'general' },
-                { title: 'navigation.payments', link: '/admin/payments', icon: 'CreditCardIcon', group: 'general' },
-                { title: 'navigation.expenses', link: '/admin/expenses', icon: 'DollarSignIcon', group: 'general' },
-                { title: 'navigation.settings', link: '/admin/settings/account-settings', icon: 'CogIcon', group: 'general' },
-              ]
-              this.settingMenu = []
-              this.config = {
-                languages: [{ name: 'English', code: 'en' }],
-                fiscal_years: []
-              }
-              this.globalSettings = { api_token: 'offline_token' }
-
-              userStore.currentUser = { name: 'Admin User', email: 'admin@craterapp.com', is_owner: true }
-              userStore.currentUserSettings = { language: 'en' }
-              userStore.currentAbilities = [{ name: '*' }]
-
-              companyStore.companies = [{ id: 1, name: 'My Business' }]
-              companyStore.selectedCompany = { id: 1, name: 'My Business' }
-              companyStore.selectedCompanySettings = { currency: 'USD', bulk_exchange_rate_configured: 'YES' }
-              companyStore.selectedCompanyCurrency = { code: 'USD', symbol: '$', precision: 2 }
-
-              this.isAppLoaded = true
-              resolve({ data: { current_company_settings: { bulk_exchange_rate_configured: 'YES' } } })
+              handleError(err)
+              reject(err)
             })
         })
       },

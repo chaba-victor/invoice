@@ -11,13 +11,9 @@ window.pinia = pinia
 window.Vuelidate = Vuelidate
 
 import Crater from './Crater'
-import { syncManager } from '@/scripts/services/offline/syncManager'
 
 window.Vue = Vue
 window.router = router
 window.VueRouter = VueRouter
-
-syncManager.init()
-window.syncManager = syncManager
 
 window.Crater = new Crater()

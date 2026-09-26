@@ -4,7 +4,7 @@
 with no internet connection and no Docker. Everything (UI, API, database, PDFs) runs on the
 user's machine.
 
-**Last updated:** 2026-09-26 · **Current phase:** 2 — next up
+**Last updated:** 2026-09-26 · **Current phase:** 3 — next up
 
 ## How to use this document
 
@@ -90,21 +90,39 @@ so these pieces go.
 - **Note:** `npm run desktop:start` / the current Electron build no longer show the UI (they relied on
   `public/index.html`). Expected until Phase 5 replaces `desktop/main.js`.
 
-## Phase 2 — Remove the browser-side offline layer ⬜
+## Phase 2 — Remove the browser-side offline layer ✅
 
 Why: with a local backend, `navigator.onLine === false` (e.g. Wi-Fi off) would divert saves into
 IndexedDB even though the local server is right there. It also has known bugs: local IDs never
 remapped, local-only fields sent to the server, false "all synced" message, and any-password login
 on network error.
 
-- [ ] Stores `invoice.js`, `estimate.js`, `customer.js`, `item.js`: remove `navigator.onLine` branches,
+- [x] Stores `invoice.js`, `estimate.js`, `customer.js`, `item.js`: remove `navigator.onLine` branches,
       `db.*` writes and `syncManager` calls.
-- [ ] `auth.js`: remove the "authorizing offline desktop session" fallbacks; network errors reject.
-- [ ] Delete `resources/scripts/services/offline/`, `components/offline/OfflineStatusBadge.vue` and its usage.
-- [ ] `main.js`: remove `syncManager` import/init.
-- [ ] Remove service worker: registration in `app.blade.php`, `public/sw.js`, `public/offline.html`.
-- [ ] Remove `dexie` from `package.json`.
+- [x] Also found by diffing against upstream Crater `master` (the project's base): `global.js` faked a whole
+      session when bootstrap failed (owner user, all abilities, fake "My Business" company); `user.js`
+      reported account updates as saved when they weren't; `Login.vue` had a PWA-install/"Download .exe"
+      panel and a box showing and auto-filling the seeded admin credentials (conflicts with D7).
+- [x] Resolution: these 9 files (7 stores, `Login.vue`, `TheSiteHeader.vue`) restored to upstream `master`
+      (user-approved), then the local removal of debug `console.log`s in `estimate.js` re-applied.
+      Upstream was the right baseline because the offline code was the only local change in them.
+- [x] `auth.js`: remove the "authorizing offline desktop session" fallbacks; network errors reject.
+- [x] Delete `resources/scripts/services/offline/`, `components/offline/OfflineStatusBadge.vue` and its usage.
+- [x] `main.js`: remove `syncManager` import/init.
+- [x] Remove service worker: registration in `app.blade.php` and `public/offline.html` removed. `public/sw.js`
+      replaced by a self-unregistering worker that clears its caches, since browsers keep running an
+      installed worker even after its script starts returning 404. Delete it after one release.
+- [x] Remove `dexie` from `package.json`.
 - **Done when:** `grep -r "dexie\|syncManager\|navigator.onLine\|serviceWorker" resources/` is empty and create/edit flows work.
+- **Result:** grep empty; build and lint pass; login page loads with no failed requests, no service
+  worker, no credentials box; wrong credentials correctly rejected (422). Logged in with a throwaway
+  test user (`claude-test@example.test`, company 1, `super admin`) and created + edited a customer,
+  item, invoice and estimate through their create/edit pages; every request succeeded and the saved
+  values were confirmed in the database. No console errors after the post-rebuild reload.
+- Restoring `TheSiteHeader.vue` from upstream re-introduced a root `/img/` URL (Phase 1 fix);
+  re-applied, plus one in `BaseGlobalLoader.vue` that Phase 1 missed.
+- **Note:** browsers that ran the earlier build keep an orphaned `InvoiceOfflineDB` IndexedDB (cached
+  customers/items). Irrelevant to the desktop app (new origin); clear it manually in any dev browser.
 
 ## Phase 3 — Make Laravel run from a read-only install dir ⬜
 
@@ -244,6 +262,7 @@ Out of scope. Notes to carry forward:
 | Some migrations/queries may be MySQL-specific. | First-run or feature failures on SQLite. | Phase 3 full migrate + seed + smoke test on SQLite. |
 | Unsigned installer. | SmartScreen warning; users may not proceed. | Get a code-signing cert before distribution. |
 | AV false positives on bundled `php.exe`. | App won't start. | Use official php.net binaries unmodified; test in Phase 10. |
+| Docker dev setup is very slow on this machine (~15 s per request), because PHP reads the project over a bind mount from a OneDrive folder. | Slow manual testing only; doesn't affect the desktop build. | Consider moving the working copy out of OneDrive. |
 | Main JS bundle is ~10 MB (2.5 MB gzipped); Vite warns on chunk size. | Slower first paint, even from local disk. | Not blocking. Look at locales/vendor splitting after Phase 9. |
 | Long paths in `vendor/`. | Install failures on old Windows configs. | `--classmap-authoritative`, keep install path short; test in Phase 10. |
 
@@ -257,3 +276,4 @@ Out of scope. Notes to carry forward:
 | 2026-09-26 | — | Decisions D4, D6–D10 confirmed. |
 | 2026-09-26 | 0 | Git repo initialised, baseline commit, `.gitignore` updated, baseline sizes recorded. |
 | 2026-09-26 | 1 | Vite config restored (`base`, `publicDir`), root-relative image URLs fixed, double `Crater.start()` removed, static `index.html` + NativePHP leftovers + `laravel-vite` npm package removed. Verified in Docker web app. |
+| 2026-09-26 | 2 | Offline layer removed (stores/auth/login/header restored to upstream, offline modules + `dexie` deleted, service worker retired). Create/edit flows verified for customer, item, invoice, estimate. |

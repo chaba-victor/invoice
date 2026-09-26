@@ -2,8 +2,6 @@ import axios from 'axios'
 import { defineStore } from 'pinia'
 import { useNotificationStore } from '@/scripts/stores/notification'
 import { handleError } from '@/scripts/helpers/error-handling'
-import db from '@/scripts/services/offline/database'
-import syncManager from '@/scripts/services/offline/syncManager'
 
 export const useItemStore = (useWindow = false) => {
   const defineStoreFunc = useWindow ? window.pinia.defineStore : defineStore
@@ -47,33 +45,17 @@ export const useItemStore = (useWindow = false) => {
       },
       fetchItems(params) {
         return new Promise((resolve, reject) => {
-          if (!navigator.onLine) {
-            db.items.toArray().then((localItems) => {
-              this.items = localItems || []
-              this.totalItems = this.items.length
-              resolve({ data: { data: this.items, meta: { item_total_count: this.items.length } } })
-            }).catch((err) => reject(err))
-            return
-          }
-
           axios
             .get(`/api/v1/items`, { params })
             .then((response) => {
               this.items = response.data.data
               this.totalItems = response.data.meta.item_total_count
-              syncManager.cacheItemsLocally(response.data.data)
+
               resolve(response)
             })
-            .catch(async (err) => {
-              const localItems = await db.items.toArray()
-              if (localItems && localItems.length > 0) {
-                this.items = localItems
-                this.totalItems = localItems.length
-                resolve({ data: { data: localItems, meta: { item_total_count: localItems.length } } })
-              } else {
-                handleError(err)
-                reject(err)
-              }
+            .catch((err) => {
+              handleError(err)
+              reject(err)
             })
         })
       },
@@ -88,57 +70,21 @@ export const useItemStore = (useWindow = false) => {
               }
               resolve(response)
             })
-            .catch(async (err) => {
-              const localItem = await db.items.get(parseInt(id) || id)
-              if (localItem) {
-                Object.assign(this.currentItem, localItem)
-                resolve({ data: { data: localItem } })
-              } else {
-                handleError(err)
-                reject(err)
-              }
+            .catch((err) => {
+              handleError(err)
+              reject(err)
             })
         })
       },
 
       addItem(data) {
         return new Promise((resolve, reject) => {
-          if (!navigator.onLine) {
-            const localId = Date.now()
-            const offlineItem = {
-              ...data,
-              id: localId,
-              _localId: localId,
-              sync_status: 'pending',
-              created_at: new Date().toISOString(),
-            }
-
-            db.items.put(offlineItem)
-            db.outbox.add({
-              type: 'CREATE_ITEM',
-              payload: offlineItem,
-              createdAt: Date.now(),
-              status: 'pending',
-            })
-
-            this.items.push(offlineItem)
-
-            const notificationStore = useNotificationStore()
-            notificationStore.showNotification({
-              type: 'success',
-              message: 'Item created offline! It will sync when back online.',
-            })
-
-            resolve({ data: { data: offlineItem } })
-            return
-          }
-
           axios
             .post('/api/v1/items', data)
             .then((response) => {
               const notificationStore = useNotificationStore()
+
               this.items.push(response.data.data)
-              syncManager.cacheItemsLocally([response.data.data])
 
               notificationStore.showNotification({
                 type: 'success',
@@ -147,38 +93,9 @@ export const useItemStore = (useWindow = false) => {
 
               resolve(response)
             })
-            .catch(async (err) => {
-              if (!navigator.onLine || err.message === 'Network Error') {
-                const localId = Date.now()
-                const offlineItem = {
-                  ...data,
-                  id: localId,
-                  _localId: localId,
-                  sync_status: 'pending',
-                  created_at: new Date().toISOString(),
-                }
-
-                await db.items.put(offlineItem)
-                await db.outbox.add({
-                  type: 'CREATE_ITEM',
-                  payload: offlineItem,
-                  createdAt: Date.now(),
-                  status: 'pending',
-                })
-
-                this.items.push(offlineItem)
-
-                const notificationStore = useNotificationStore()
-                notificationStore.showNotification({
-                  type: 'success',
-                  message: 'Item saved offline. Will sync when back online.',
-                })
-
-                resolve({ data: { data: offlineItem } })
-              } else {
-                handleError(err)
-                reject(err)
-              }
+            .catch((err) => {
+              handleError(err)
+              reject(err)
             })
         })
       },

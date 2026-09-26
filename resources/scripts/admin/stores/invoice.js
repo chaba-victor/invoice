@@ -15,8 +15,6 @@ import { useTaxTypeStore } from './tax-type'
 import { useCompanyStore } from './company'
 import { useItemStore } from './item'
 import { useUserStore } from './user'
-import db from '@/scripts/services/offline/database'
-import syncManager from '@/scripts/services/offline/syncManager'
 
 export const useInvoiceStore = (useWindow = false) => {
   const defineStoreFunc = useWindow ? window.pinia.defineStore : defineStore
@@ -116,33 +114,16 @@ export const useInvoiceStore = (useWindow = false) => {
 
       fetchInvoices(params) {
         return new Promise((resolve, reject) => {
-          if (!navigator.onLine) {
-            db.invoices.toArray().then((localInvoices) => {
-              this.invoices = localInvoices || []
-              this.invoiceTotalCount = this.invoices.length
-              resolve({ data: { data: this.invoices, meta: { invoice_total_count: this.invoices.length } } })
-            }).catch((err) => reject(err))
-            return
-          }
-
           axios
             .get(`/api/v1/invoices`, { params })
             .then((response) => {
               this.invoices = response.data.data
               this.invoiceTotalCount = response.data.meta.invoice_total_count
-              syncManager.cacheInvoicesLocally(response.data.data)
               resolve(response)
             })
-            .catch(async (err) => {
-              const localInvoices = await db.invoices.toArray()
-              if (localInvoices && localInvoices.length > 0) {
-                this.invoices = localInvoices
-                this.invoiceTotalCount = localInvoices.length
-                resolve({ data: { data: localInvoices, meta: { invoice_total_count: localInvoices.length } } })
-              } else {
-                handleError(err)
-                reject(err)
-              }
+            .catch((err) => {
+              handleError(err)
+              reject(err)
             })
         })
       },
@@ -156,15 +137,9 @@ export const useInvoiceStore = (useWindow = false) => {
               this.newInvoice.customer = response.data.data.customer
               resolve(response)
             })
-            .catch(async (err) => {
-              const localInv = await db.invoices.get(parseInt(id) || id)
-              if (localInv) {
-                Object.assign(this.newInvoice, localInv)
-                resolve({ data: { data: localInv } })
-              } else {
-                handleError(err)
-                reject(err)
-              }
+            .catch((err) => {
+              handleError(err)
+              reject(err)
             })
         })
       },
@@ -204,40 +179,10 @@ export const useInvoiceStore = (useWindow = false) => {
 
       addInvoice(data) {
         return new Promise((resolve, reject) => {
-          if (!navigator.onLine) {
-            const localId = Date.now()
-            const offlineInvoice = {
-              ...data,
-              id: localId,
-              _localId: localId,
-              sync_status: 'pending',
-              created_at: new Date().toISOString(),
-            }
-
-            db.invoices.put(offlineInvoice)
-            db.outbox.add({
-              type: 'CREATE_INVOICE',
-              payload: offlineInvoice,
-              createdAt: Date.now(),
-              status: 'pending',
-            })
-
-            this.invoices = [offlineInvoice, ...this.invoices]
-
-            notificationStore.showNotification({
-              type: 'success',
-              message: 'Invoice created offline! It will sync when back online.',
-            })
-
-            resolve({ data: { invoice: offlineInvoice } })
-            return
-          }
-
           axios
             .post('/api/v1/invoices', data)
             .then((response) => {
               this.invoices = [...this.invoices, response.data.invoice]
-              syncManager.cacheInvoicesLocally([response.data.invoice])
 
               notificationStore.showNotification({
                 type: 'success',
@@ -246,37 +191,9 @@ export const useInvoiceStore = (useWindow = false) => {
 
               resolve(response)
             })
-            .catch(async (err) => {
-              if (!navigator.onLine || err.message === 'Network Error') {
-                const localId = Date.now()
-                const offlineInvoice = {
-                  ...data,
-                  id: localId,
-                  _localId: localId,
-                  sync_status: 'pending',
-                  created_at: new Date().toISOString(),
-                }
-
-                await db.invoices.put(offlineInvoice)
-                await db.outbox.add({
-                  type: 'CREATE_INVOICE',
-                  payload: offlineInvoice,
-                  createdAt: Date.now(),
-                  status: 'pending',
-                })
-
-                this.invoices = [offlineInvoice, ...this.invoices]
-
-                notificationStore.showNotification({
-                  type: 'success',
-                  message: 'Saved offline due to network issue. Will sync when back online.',
-                })
-
-                resolve({ data: { invoice: offlineInvoice } })
-              } else {
-                handleError(err)
-                reject(err)
-              }
+            .catch((err) => {
+              handleError(err)
+              reject(err)
             })
         })
       },

@@ -69,17 +69,6 @@
 
         window.Crater.start()
     </script>
-    <script>
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', function() {
-                navigator.serviceWorker.register('/sw.js').then(function(registration) {
-                    console.log('Invoice PWA ServiceWorker registered with scope:', registration.scope);
-                }, function(err) {
-                    console.log('Invoice PWA ServiceWorker registration failed:', err);
-                });
-            });
-        }
-    </script>
 </body>
 
 </html>

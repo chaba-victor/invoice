@@ -64,7 +64,7 @@ const props = defineProps({
 })
 
 function getCraterLogo() {
-  const imgUrl = new URL('/img/crater-logo.png', import.meta.url)
+  const imgUrl = `${import.meta.env.BASE_URL}img/crater-logo.png`
   return imgUrl
 }
 </script>
