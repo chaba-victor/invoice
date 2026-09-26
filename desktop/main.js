@@ -159,6 +159,33 @@ function configureSession() {
   })
 }
 
+// D12: tell the user which recurring invoices were created for occurrences missed while closed.
+function showMissedRecurringInvoices(missed) {
+  const invoices = (missed && missed.invoices) || []
+  const capped = (missed && missed.capped) || []
+  if (!invoices.length && !capped.length) {
+    return
+  }
+
+  const shown = invoices.slice(0, 10).map((i) => `${i.invoice_number} · ${i.customer || 'Unknown customer'} · ${i.invoice_date}`)
+  if (invoices.length > shown.length) {
+    shown.push(`…and ${invoices.length - shown.length} more`)
+  }
+  if (capped.length) {
+    shown.push('', 'Some schedules had more missed dates than can be created at once; the rest will be created the next time Invoice starts.')
+  }
+
+  const count = invoices.length
+  dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    title: 'Invoice',
+    message: `While Invoice was closed, ${count} recurring invoice${count === 1 ? ' was' : 's were'} due.`,
+    detail: `${count === 1 ? 'It has' : 'They have'} been created as drafts, dated when they were due:\n\n${shown.join('\n')}`,
+    buttons: ['OK'],
+    noLink: true,
+  })
+}
+
 async function showFatalError(message, err) {
   log.error(message, err)
   const { response } = await dialog.showMessageBox({
@@ -221,11 +248,12 @@ async function start() {
   runtime = createRuntime({ ...paths, version: app.getVersion(), dev, onServerExit })
 
   try {
-    await runtime.prepare(setSplashStatus)
+    const report = await runtime.prepare(setSplashStatus)
     setSplashStatus('Starting…')
     await runtime.startServer()
     runtime.startScheduler()
     createMainWindow()
+    mainWindow.once('ready-to-show', () => showMissedRecurringInvoices(report.missedRecurringInvoices))
   } catch (err) {
     // The splash stays open behind the dialog: closing the last window would quit the app first.
     await showFatalError('Invoice could not start.', err)

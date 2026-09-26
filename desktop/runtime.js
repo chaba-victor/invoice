@@ -239,9 +239,18 @@ function createRuntime({ appDir, phpDir, dataDir, version, dev, onServerExit }) 
     backupBeforeUpgrade()
 
     onStatus('Updating the database…')
-    await artisan(['desktop:provision'])
+    const output = await artisan(['desktop:provision'])
 
     fs.writeFileSync(files.state, JSON.stringify({ version, lastStartedAt: new Date().toISOString() }, null, 2))
+
+    // desktop:provision prints one "DESKTOP_REPORT {json}" line with what it did for the user.
+    const reportLine = output.find((line) => line.startsWith('DESKTOP_REPORT '))
+    try {
+      return reportLine ? JSON.parse(reportLine.slice('DESKTOP_REPORT '.length)) : {}
+    } catch (err) {
+      log.error('Could not read the provisioning report', err)
+      return {}
+    }
   }
 
   function waitForServer(proc) {

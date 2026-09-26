@@ -2,7 +2,11 @@
 
 namespace Crater\Console\Commands;
 
+use Crater\Models\RecurringInvoice;
+use Crater\Models\Setting;
+use Crater\Models\User;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Storage;
 
@@ -45,9 +49,16 @@ class DesktopProvision extends Command
 
         $this->call('migrate', ['--force' => true]);
 
-        // These are scheduled daily at midnight, when a desktop app is usually closed.
-        // Both are idempotent, so run them on every start instead.
-        if (Storage::disk('local')->has('database_created')) {
+        $this->completeServerSetup();
+
+        if (Setting::getSetting('profile_complete') === 'COMPLETED') {
+            // Recurring invoices only run while the scheduler does, i.e. while the app is open.
+            // The launcher shows the user what this created (see desktop/runtime.js).
+            $missed = RecurringInvoice::generateMissedInvoices();
+            $this->line('DESKTOP_REPORT '.json_encode(['missedRecurringInvoices' => $missed]));
+
+            // Scheduled daily at midnight, when a desktop app is usually closed. Both are
+            // idempotent, so run them on every start; after the catch-up so its invoices count.
             $this->call('check:invoices:status');
             $this->call('check:estimates:status');
         }
@@ -56,5 +67,33 @@ class DesktopProvision extends Command
         $this->call('route:cache');
 
         return 0;
+    }
+
+    /**
+     * Do what the web installer's first five steps do (requirements, permissions, database,
+     * domain, email): the desktop app bundles its own PHP, owns its data directory, uses a local
+     * SQLite database and address, and doesn't send email. The wizard then opens at step 6,
+     * where the user creates their account, followed by company details and preferences.
+     *
+     * @return void
+     */
+    protected function completeServerSetup()
+    {
+        if (! User::exists()) {
+            // The seeders aren't idempotent; a partial run must not be left behind for the next start.
+            DB::transaction(function () {
+                $this->call('db:seed', ['--force' => true]);
+            });
+        }
+
+        if (! Storage::disk('local')->has('database_created')) {
+            Storage::disk('local')->put('database_created', 'database_created');
+        }
+
+        $step = Setting::getSetting('profile_complete');
+
+        if ($step !== 'COMPLETED' && (int) $step < 5) {
+            Setting::setSetting('profile_complete', 5);
+        }
     }
 }

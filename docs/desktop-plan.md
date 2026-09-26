@@ -4,7 +4,7 @@
 with no internet connection and no Docker. Everything (UI, API, database, PDFs) runs on the
 user's machine.
 
-**Last updated:** 2026-09-26 · **Current phase:** 6 — next up (D12 open)
+**Last updated:** 2026-09-26 · **Current phase:** 7 — next up
 
 ## How to use this document
 
@@ -30,7 +30,7 @@ user's machine.
 | D9 | **Per-user install** (NSIS, `%LOCALAPPDATA%\Programs\Invoice`), no admin rights needed. User data in `%APPDATA%\Invoice\data` (see Target architecture). | Locked |
 | D10 | **Fixed local port** `127.0.0.1:8765`, falling back to a free port if taken. Data lives in SQLite, so a port change only costs the login session. | Locked |
 | D11 | **VC++ runtime deployed app-locally.** PHP needs `vcruntime140.dll`, `vcruntime140_1.dll`, `msvcp140.dll`, which a clean Windows may lack. Installing the VC++ redistributable needs admin (conflicts with D9), so the three DLLs ship next to `php.exe`, copied from the Visual Studio redist folder at build time. | Locked |
-| D12 | **Missed recurring invoices.** Crater generates them from cron timing only, so occurrences while the app is closed are skipped (and its `next_invoice_at` never advances past the first run, so it cannot detect them). Options: (a) on launch, generate one invoice per missed occurrence; (b) generate one invoice for the latest missed occurrence; (c) keep upstream behaviour (only while open). | **Open — needs decision** |
+| D12 | **Missed recurring invoices: catch up (option a).** Crater generates recurring invoices only while its scheduler runs, so occurrences while the app is closed were skipped. At launch, the app generates one invoice per missed occurrence (dated when due) and lists them in a notice. See "D12 — Recurring invoice catch-up". | Locked |
 
 ---
 
@@ -241,16 +241,43 @@ provisioning, server, scheduler), `desktop/log.js`, `desktop/splash.html`.
 - **Follow-ups:** report downloads are named `document.pdf` (upstream); packaged build needs
   `build.files` to include `desktop/**` (Phase 9); D12 (missed recurring invoices).
 
-## Phase 6 — First-run setup flow ⬜
+## Phase 6 — First-run setup flow ✅
 
 The web installer has 8 steps; steps 1–5 are server-admin concerns the desktop app handles itself.
 
-- [ ] Electron (or an artisan command `desktop:provision`) runs migrations + seeders and writes the
-      `database_created` marker, so the web installer's DB step is skipped.
-- [ ] Skip Step1 Requirements, Step2 Permissions, Step3 Database, Step4 Domain, Step5 Email
-      (start the wizard at `profile_complete` for Step6).
-- [ ] Keep Step6 Account, Step7 Company, Step8 Preferences.
+- [x] `desktop:provision` does what steps 1–5 would: on an empty database it runs the seeders (currencies,
+      countries, default admin user + company) inside a transaction (they aren't idempotent), writes the
+      `database_created` marker, and sets `profile_complete` to 5 unless setup is further along.
+- [x] Wizard opens at Step 6 Account → Step 7 Company → Step 8 Preferences (unchanged Crater screens).
+- [x] `Installation.vue`: when resuming at step 6 or later without a session, sign in through the installer's
+      own login endpoint first. Steps 6–8 edit the signed-in user, and step 4 is what normally signs in —
+      this also fixes the web installer when a browser is closed mid-setup.
+- [x] Step 6 requires a new password, so the seeded `admin@craterapp.com` / `crater@123` stops working once
+      the account step is done.
 - **Done when:** fresh install goes straight to "create your account" → company → preferences → dashboard.
+- **Result:** fresh data dir in the Electron app: seeded + marked on first start, wizard at "Account
+  Information", steps 6–8 completed (including the currency confirmation) → dashboard for the new company.
+  Database checked: one user with the new email/password, seed password rejected, `COMPLETED`. Restart →
+  dashboard, no reseeding. The sign-in fallback ran for real (a stale cookie from a deleted data dir → 401).
+- **Follow-up (Phase 7):** the wizard's progress indicator still counts the skipped server steps.
+
+## D12 — Recurring invoice catch-up ✅
+
+- [x] New nullable `recurring_invoices.last_run_at`: the last schedule occurrence handled. Both the
+      scheduler and the catch-up set it, and `generateInvoice()` skips an occurrence at or before it, so
+      the two can never create the same occurrence twice.
+- [x] `generateInvoice($occurrence)`: invoices are dated on the day they were due (company time zone) with
+      the due date offset from that; `DATE` limits compare against the occurrence; returns the invoice.
+- [x] `RecurringInvoice::generateMissedInvoices()`: for each active schedule, every cron occurrence after
+      `last_run_at` (or, for schedules predating the column, after their latest invoice or creation —
+      never before a schedule existed) up to now; `COUNT`/`DATE` limits still complete the schedule;
+      capped at 100 per schedule per start (the rest follow on the next start).
+- [x] `desktop:provision` runs it before the status checks and prints a `DESKTOP_REPORT` line; Electron
+      shows "While Invoice was closed, N recurring invoices were due…" with the list (first 10).
+- [x] Fixed upstream: `next_invoice_at` was always computed from `starts_at`, so it never advanced.
+- **Result:** schedule last run 3 days ago → 3 invoices dated 24/25/26 Sep, due +7 days, notice shown;
+  a new schedule with a past start date → nothing backfilled; a `COUNT` limit of 2 with 3 missed →
+  2 invoices then `COMPLETED`; relaunch → nothing created, no notice.
 
 ## Phase 7 — Disable online-only features (`APP_MODE=desktop`) ⬜
 
@@ -299,7 +326,8 @@ Data exists on one machine only, so this is required, not optional.
 Run on a clean Windows 11 VM **with networking disabled**.
 
 - [ ] Install without admin rights; shortcuts created; app icon correct.
-- [ ] First run → onboarding → dashboard.
+- [ ] First run → onboarding (steps 6–8) → dashboard.
+- [ ] Close the app across a recurring invoice's due date → notice on next start, invoice dated correctly.
 - [ ] Create customer, item, invoice, estimate, payment, expense (with receipt upload).
 - [ ] Invoice/estimate/payment PDFs render with correct fonts and logo; save dialog works; print works.
 - [ ] Reports (sales, P&L, tax summary) open.
@@ -353,3 +381,5 @@ Out of scope. Notes to carry forward:
 | 2026-09-26 | 3 | Data-dir support in `bootstrap/app.php`, SQLite connector (WAL, busy timeout) + foreign keys enabled, dompdf `chroot` includes storage, system file disks use current paths, `/storage` route, `desktop:provision`. Verified with read-only code in Docker; Pest 248/248. |
 | 2026-09-26 | 4 | Pinned PHP 8.1.34 + php.ini + app-local VC++ runtime (`desktop:fetch-php`), staged app with `--no-dev` Composer install (`desktop:stage`). Fixed IdeHelper provider and Windows cache-path bugs. Staged app verified natively on Windows end to end. |
 | 2026-09-26 | 5 | New Electron main process (`desktop/main.js`, `runtime.js`, `log.js`, `splash.html`): data dir + `.env`, pre-upgrade backups, provisioning, PHP server with orphan/port/crash handling, per-minute scheduler, sandboxed windows, downloads. PDF response fix. Verified in dev mode (see Phase 5 result). D11 locked; D12 raised. |
+| 2026-09-26 | 6 | First-run flow: provisioning seeds and completes installer steps 1–5; wizard opens at the account step and signs itself in when resuming. Verified through all three steps to the dashboard. |
+| 2026-09-26 | D12 | Recurring invoice catch-up at launch (`last_run_at`, occurrence-dated invoices, notice), scheduler de-duplication, `next_invoice_at` fix. Verified incl. limits and re-launch. |

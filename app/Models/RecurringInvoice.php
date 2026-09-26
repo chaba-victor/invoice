@@ -21,7 +21,8 @@ class RecurringInvoice extends Model
     ];
 
     protected $dates = [
-        'starts_at'
+        'starts_at',
+        'last_run_at',
     ];
 
     public const NONE = 'NONE';
@@ -261,42 +262,103 @@ class RecurringInvoice extends Model
         }
     }
 
-    public function generateInvoice()
+    /**
+     * Generate the invoice for one occurrence of the schedule.
+     *
+     * @param  \Carbon\Carbon|null  $occurrence  The scheduled time being handled, in the company's
+     *                                            time zone. Defaults to the current minute.
+     * @return \Crater\Models\Invoice|null
+     */
+    public function generateInvoice($occurrence = null)
     {
-        if (Carbon::now()->lessThan($this->starts_at)) {
-            return;
+        $occurrence = $occurrence ? $occurrence->copy() : Carbon::now()->startOfMinute();
+
+        if ($occurrence->lessThan($this->starts_at)) {
+            return null;
         }
 
-        if ($this->limit_by == 'DATE') {
-            $startDate = Carbon::today()->format('Y-m-d');
-
-            $endDate = $this->limit_date;
-
-            if ($endDate >= $startDate) {
-                $this->createInvoice();
-
-                $this->updateNextInvoiceDate();
-            } else {
-                $this->markStatusAsCompleted();
-            }
-        } elseif ($this->limit_by == 'COUNT') {
-            $invoiceCount = Invoice::where('recurring_invoice_id', $this->id)->count();
-
-            if ($invoiceCount < $this->limit_count) {
-                $this->createInvoice();
-
-                $this->updateNextInvoiceDate();
-            } else {
-                $this->markStatusAsCompleted();
-            }
-        } else {
-            $this->createInvoice();
-
-            $this->updateNextInvoiceDate();
+        // Already generated, e.g. by the catch-up that runs when the desktop app starts.
+        if ($this->last_run_at && $occurrence->lessThanOrEqualTo($this->last_run_at)) {
+            return null;
         }
+
+        if ($this->limit_by == 'DATE' && $this->limit_date < $occurrence->format('Y-m-d')) {
+            $this->markStatusAsCompleted();
+
+            return null;
+        }
+
+        if ($this->limit_by == 'COUNT' && Invoice::where('recurring_invoice_id', $this->id)->count() >= $this->limit_count) {
+            $this->markStatusAsCompleted();
+
+            return null;
+        }
+
+        $invoice = $this->createInvoice($occurrence);
+
+        $this->last_run_at = $occurrence->copy()->setTimezone(config('app.timezone'));
+        $this->updateNextInvoiceDate($occurrence);
+
+        return $invoice;
     }
 
-    public function createInvoice()
+    /**
+     * Generate invoices for every occurrence that came due since the last one handled, e.g.
+     * while the desktop app was closed. Each is dated on the day it was due. Occurrences from
+     * before a schedule was set up are not backfilled.
+     *
+     * @param  int  $limitPerSchedule  Safety cap on how many invoices one schedule may generate.
+     * @return array  One entry per generated invoice, plus any schedules that hit the cap.
+     */
+    public static function generateMissedInvoices($limitPerSchedule = 100)
+    {
+        $report = ['invoices' => [], 'capped' => []];
+
+        foreach (self::where('status', self::ACTIVE)->get() as $recurringInvoice) {
+            $timeZone = CompanySetting::getSetting('time_zone', $recurringInvoice->company_id) ?: config('app.timezone');
+            $now = Carbon::now($timeZone);
+            $cron = new Cron\CronExpression($recurringInvoice->frequency);
+
+            // Schedules that predate last_run_at: start from their latest invoice, or when they were set up.
+            $from = $recurringInvoice->last_run_at ? $recurringInvoice->last_run_at->copy() : $recurringInvoice->created_at->copy();
+
+            if (! $recurringInvoice->last_run_at && ($lastInvoiceAt = $recurringInvoice->invoices()->max('created_at'))) {
+                $from = $from->max(Carbon::parse($lastInvoiceAt));
+            }
+
+            $from = $from->max($recurringInvoice->starts_at->copy()->subSecond())->copy()->setTimezone($timeZone);
+
+            for ($count = 0; ; $count++) {
+                $next = Carbon::instance($cron->getNextRunDate($from, 0, false, $timeZone));
+
+                if ($next->greaterThan($now) || $recurringInvoice->status !== self::ACTIVE) {
+                    break;
+                }
+
+                if ($count >= $limitPerSchedule) {
+                    $report['capped'][] = $recurringInvoice->id;
+
+                    break;
+                }
+
+                $invoice = $recurringInvoice->generateInvoice($next);
+
+                if ($invoice) {
+                    $report['invoices'][] = [
+                        'invoice_number' => $invoice->invoice_number,
+                        'customer' => optional($invoice->customer)->name,
+                        'invoice_date' => $invoice->formattedInvoiceDate,
+                    ];
+                }
+
+                $from = $next;
+            }
+        }
+
+        return $report;
+    }
+
+    public function createInvoice($invoiceDate = null)
     {
         //get invoice_number
         $serial = (new SerialNumberFormatter())
@@ -312,8 +374,10 @@ class RecurringInvoice extends Model
         }
 
         $newInvoice['creator_id'] = $this->creator_id;
-        $newInvoice['invoice_date'] = Carbon::today()->format('Y-m-d');
-        $newInvoice['due_date'] = Carbon::today()->addDays($days)->format('Y-m-d');
+        $invoiceDate = $invoiceDate ? $invoiceDate->copy()->startOfDay() : Carbon::today();
+
+        $newInvoice['invoice_date'] = $invoiceDate->format('Y-m-d');
+        $newInvoice['due_date'] = $invoiceDate->copy()->addDays((int) $days)->format('Y-m-d');
         $newInvoice['status'] = Invoice::STATUS_DRAFT;
         $newInvoice['company_id'] = $this->company_id;
         $newInvoice['paid_status'] = Invoice::STATUS_UNPAID;
@@ -380,6 +444,8 @@ class RecurringInvoice extends Model
 
             $invoice->send($data);
         }
+
+        return $invoice;
     }
 
     public function markStatusAsCompleted()
@@ -397,9 +463,15 @@ class RecurringInvoice extends Model
         return $cron->getNextRunDate($starts_at)->format('Y-m-d H:i:s');
     }
 
-    public function updateNextInvoiceDate()
+    /**
+     * @param  \Carbon\Carbon|null  $after  The occurrence just handled. Without it the next date
+     *                                      was always computed from starts_at, so it never advanced.
+     */
+    public function updateNextInvoiceDate($after = null)
     {
-        $nextInvoiceAt = self::getNextInvoiceDate($this->frequency, $this->starts_at);
+        $from = $after && $after->greaterThan($this->starts_at) ? $after : $this->starts_at;
+
+        $nextInvoiceAt = self::getNextInvoiceDate($this->frequency, $from);
 
         $this->next_invoice_at = $nextInvoiceAt;
         $this->save();

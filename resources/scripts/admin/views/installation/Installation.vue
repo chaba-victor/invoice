@@ -61,9 +61,23 @@ export default {
 
       let dbstep = parseInt(res.data.profile_complete)
 
+      // Steps 6 onwards edit the signed-in user. Step 4 normally signs in, so resuming past it
+      // (a closed browser, or the desktop app, which completes steps 1-5 itself) needs a session.
+      if (dbstep >= 5) {
+        await ensureInstallationSession()
+      }
+
       if (dbstep) {
         currentStepNumber.value = dbstep + 1
         stepComponent.value = `step_${dbstep + 1}`
+      }
+    }
+
+    async function ensureInstallationSession() {
+      try {
+        await installationStore.checkAutheticated()
+      } catch (e) {
+        await installationStore.installationLogin()
       }
     }
 

@@ -2,6 +2,7 @@
 
 namespace Crater\Console;
 
+use Carbon\Carbon;
 use Crater\Models\CompanySetting;
 use Crater\Models\RecurringInvoice;
 use Illuminate\Console\Scheduling\Schedule;
@@ -40,8 +41,8 @@ class Kernel extends ConsoleKernel
             foreach ($recurringInvoices as $recurringInvoice) {
                 $timeZone = CompanySetting::getSetting('time_zone', $recurringInvoice->company_id);
 
-                $schedule->call(function () use ($recurringInvoice) {
-                    $recurringInvoice->generateInvoice();
+                $schedule->call(function () use ($recurringInvoice, $timeZone) {
+                    $recurringInvoice->generateInvoice(Carbon::now($timeZone)->startOfMinute());
                 })->cron($recurringInvoice->frequency)->timezone($timeZone);
             }
         }
