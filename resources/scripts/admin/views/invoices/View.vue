@@ -14,6 +14,9 @@ import InvoiceDropdown from '@/scripts/admin/components/dropdowns/InvoiceIndexDr
 import LoadingIcon from '@/scripts/components/icons/LoadingIcon.vue'
 
 import abilities from '@/scripts/admin/stub/abilities'
+import { isDesktopApp } from '@/scripts/helpers/app-mode'
+
+const isDesktop = isDesktopApp()
 
 const modalStore = useModalStore()
 const invoiceStore = useInvoiceStore()
@@ -251,7 +254,8 @@ onSearched = debounce(onSearched, 500)
         <BaseButton
           v-if="
             invoiceData.status === 'DRAFT' &&
-            userStore.hasAbilities(abilities.SEND_INVOICE)
+            userStore.hasAbilities(abilities.SEND_INVOICE) &&
+            !isDesktop
           "
           variant="primary"
           class="text-sm"

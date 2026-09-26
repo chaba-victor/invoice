@@ -7,7 +7,7 @@
       type="recurring-invoice"
     />
 
-    <div class="flex mt-7">
+    <div v-if="!isDesktop" class="flex mt-7">
       <div class="relative w-20 mt-8">
         <BaseSwitch
           v-model="recurringInvoiceStore.newRecurringInvoice.send_automatically"
@@ -188,6 +188,9 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import ExchangeRateConverter from '@/scripts/admin/components/estimate-invoice-common/ExchangeRateConverter.vue'
+import { isDesktopApp } from '@/scripts/helpers/app-mode'
+
+const isDesktop = isDesktopApp()
 
 const props = defineProps({
   v: {

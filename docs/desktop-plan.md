@@ -4,7 +4,7 @@
 with no internet connection and no Docker. Everything (UI, API, database, PDFs) runs on the
 user's machine.
 
-**Last updated:** 2026-09-26 · **Current phase:** 7 — next up
+**Last updated:** 2026-09-26 · **Current phase:** 8 — next up (D13 open)
 
 ## How to use this document
 
@@ -31,6 +31,8 @@ user's machine.
 | D10 | **Fixed local port** `127.0.0.1:8765`, falling back to a free port if taken. Data lives in SQLite, so a port change only costs the login session. | Locked |
 | D11 | **VC++ runtime deployed app-locally.** PHP needs `vcruntime140.dll`, `vcruntime140_1.dll`, `msvcp140.dll`, which a clean Windows may lack. Installing the VC++ redistributable needs admin (conflicts with D9), so the three DLLs ship next to `php.exe`, copied from the Visual Studio redist folder at build time. | Locked |
 | D12 | **Missed recurring invoices: catch up (option a).** Crater generates recurring invoices only while its scheduler runs, so occurrences while the app is closed were skipped. At launch, the app generates one invoice per missed occurrence (dated when due) and lists them in a notice. See "D12 — Recurring invoice catch-up". | Locked |
+| D13 | **Password recovery.** "Forgot password" works by email, so it is hidden in the desktop app (D8) — which leaves a user who forgets their password locked out of their own data. Proposal: a "Reset Invoice password" Start-menu shortcut (`Invoice.exe --reset-password`) opens a small window to set a new password for the owner account. It needs access to the Windows account, which already gives access to the data files, so it keeps D7's protection against casual access. | **Open — needs decision** |
+| D14 | **Phase 7 hides, it doesn't remove.** Online-only features are hidden in the desktop UI; their backend (routes, controllers, packages) stays for web installs and a future hosted/hybrid version. | Locked |
 
 ---
 
@@ -279,20 +281,32 @@ The web installer has 8 steps; steps 1–5 are server-admin concerns the desktop
   a new schedule with a past start date → nothing backfilled; a `COUNT` limit of 2 with 3 missed →
   2 invoices then `COMPLETED`; relaunch → nothing created, no notice.
 
-## Phase 7 — Disable online-only features (`APP_MODE=desktop`) ⬜
+## Phase 7 — Disable online-only features (`APP_MODE=desktop`) ✅
 
-One switch, `config('crater.mode')` from `APP_MODE` (`web` default, `desktop` for this app), exposed to the
-frontend via the bootstrap response. This is the seam the hybrid work will use later.
+One switch, `config('crater.mode')` from `APP_MODE` (`web` default, `desktop` for this app). The launcher
+passes `APP_MODE=desktop`; `app.blade.php` exposes it as `window.app_mode` (set before any module runs, so
+it also reaches the login and installer pages); the frontend reads it via `helpers/app-mode.js`. This is
+the seam the hybrid work will use later. Per D14, features are hidden in the UI; backends stay.
 
-- [ ] In-app updater (`Admin/Update/*`, version check against craterapp.com) — routes off, menu hidden.
-      Updates come from new installers.
-- [ ] Modules marketplace (`Admin/Modules/*`) — routes off, menu hidden.
-- [ ] Exchange-rate providers (currencyfreaks, currencylayer, currconv) — hidden; manual exchange rates stay.
-- [ ] Customer portal and Stripe payments — routes off, menu/links hidden (customers can't reach localhost).
-- [ ] Email: "Send" actions hidden, mail settings hidden (D8). Download/print stay.
-- [ ] Backup settings: local disk only; cloud disks (Dropbox, S3, etc.) hidden.
-- [ ] Remove `@stripe/stripe-js` from the desktop bundle if unused elsewhere.
+- [x] Menus: `config('crater.desktop_hidden_links')` leaves out Modules, Exchange Rate (providers), Notifications,
+      Mail Configuration, File Disk, Backup (Crater's backup needs the `sqlite3` CLI; Phase 8 replaces it) and
+      Update App when building the menus (`AppServiceProvider::generateMenu`). Users and Roles stay.
+- [x] In-app updater, modules marketplace: menu entries hidden. Updates come from new installers.
+- [x] Exchange rates: provider settings hidden; with no provider the backend returns the last rate used or
+      asks for one manually — no network call.
+- [x] Customer portal: "Portal access" section hidden in the customer form and the quick-add customer modal;
+      "Copy PDF URL" (a link customers would open) hidden in invoice/estimate/payment menus.
+- [x] Email (D8): Send / Resend invoice, estimate and payment receipt hidden (view pages and row menus);
+      "Send automatically" hidden on recurring invoices; "Forgot Password?" hidden on the login page (see D13).
+      "Mark as sent", PDF view/download/print stay.
+- [x] Cloud disks (Dropbox, S3, DigitalOcean Spaces): File Disk settings hidden.
+- [x] `@stripe/stripe-js` removed — nothing in the frontend used it.
+- [x] Installer progress shows 3 steps (6–8) in desktop mode instead of Crater's 7.
 - **Done when:** with the network adapter disabled, no screen shows an action that fails because it's offline.
+- **Result:** in the Electron app — menus without the hidden entries; invoice view shows "Mark as sent" but
+  no Send or Copy PDF URL; customer form and modal without portal access; recurring form without "Send
+  automatically"; login without "Forgot Password?"; installer with 3 progress dots. The Docker web install
+  still reports `web` and keeps all 16 settings entries. The network-off pass is part of Phase 10.
 
 ## Phase 8 — Data safety ⬜
 
@@ -331,6 +345,8 @@ Run on a clean Windows 11 VM **with networking disabled**.
 - [ ] Create customer, item, invoice, estimate, payment, expense (with receipt upload).
 - [ ] Invoice/estimate/payment PDFs render with correct fonts and logo; save dialog works; print works.
 - [ ] Reports (sales, P&L, tax summary) open.
+- [ ] Click through every screen with networking disabled: nothing offers email, sharing links, updates or
+      online services, and nothing errors because it is offline.
 - [ ] Close and reopen: all data and logos still there; still logged in.
 - [ ] Launch twice: second launch focuses the first window.
 - [ ] Occupy port 8765 beforehand: app falls back and works.
@@ -383,3 +399,4 @@ Out of scope. Notes to carry forward:
 | 2026-09-26 | 5 | New Electron main process (`desktop/main.js`, `runtime.js`, `log.js`, `splash.html`): data dir + `.env`, pre-upgrade backups, provisioning, PHP server with orphan/port/crash handling, per-minute scheduler, sandboxed windows, downloads. PDF response fix. Verified in dev mode (see Phase 5 result). D11 locked; D12 raised. |
 | 2026-09-26 | 6 | First-run flow: provisioning seeds and completes installer steps 1–5; wizard opens at the account step and signs itself in when resuming. Verified through all three steps to the dashboard. |
 | 2026-09-26 | D12 | Recurring invoice catch-up at launch (`last_run_at`, occurrence-dated invoices, notice), scheduler de-duplication, `next_invoice_at` fix. Verified incl. limits and re-launch. |
+| 2026-09-26 | 7 | `APP_MODE=desktop`: online-only menus and actions hidden (updater, modules, exchange-rate providers, portal, email, cloud disks, Crater backup), Stripe package removed, 3-step installer progress. Backends untouched (D14). D13 raised. |

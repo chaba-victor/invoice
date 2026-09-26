@@ -59,6 +59,10 @@ class AppServiceProvider extends ServiceProvider
 
     public function generateMenu($menu, $data)
     {
+        if (config('crater.mode') === 'desktop' && in_array($data['link'], config('crater.desktop_hidden_links'))) {
+            return;
+        }
+
         $menu->add($data['title'], $data['link'])
             ->data('icon', $data['icon'])
             ->data('name', $data['name'])

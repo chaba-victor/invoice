@@ -8,8 +8,8 @@
     />
 
     <BaseWizard
-      :steps="7"
-      :current-step="currentStepNumber"
+      :steps="wizardSteps"
+      :current-step="wizardCurrentStep"
       @click="onNavClick"
     >
       <component :is="stepComponent" @next="onStepChange" />
@@ -18,7 +18,7 @@
 </template>
 
 <script>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import Step1RequirementsCheck from './Step1RequirementsCheck.vue'
 import Step2PermissionCheck from './Step2PermissionCheck.vue'
 import Step3DatabaseConfig from './Step3DatabaseConfig.vue'
@@ -29,6 +29,7 @@ import Step7CompanyInfo from './Step7CompanyInfo.vue'
 import Step8CompanyPreferences from './Step8CompanyPreferences.vue'
 import { useInstallationStore } from '@/scripts/admin/stores/installation'
 import { useRouter } from 'vue-router'
+import { isDesktopApp } from '@/scripts/helpers/app-mode'
 
 export default {
   components: {
@@ -48,6 +49,13 @@ export default {
 
     const router = useRouter()
     const installationStore = useInstallationStore()
+
+    // The desktop app completes the server steps (1-5) itself, so its progress shows steps 6-8 only.
+    const isDesktop = isDesktopApp()
+    const wizardSteps = isDesktop ? 3 : 7
+    const wizardCurrentStep = computed(() =>
+      isDesktop ? currentStepNumber.value - 5 : currentStepNumber.value
+    )
 
     checkCurrentProgress()
 
@@ -115,6 +123,8 @@ export default {
     return {
       stepComponent,
       currentStepNumber,
+      wizardSteps,
+      wizardCurrentStep,
       onStepChange,
       saveStepProgress,
       onNavClick,

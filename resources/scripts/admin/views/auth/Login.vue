@@ -46,7 +46,8 @@
     </BaseInputGroup>
 
     <div class="mt-5 mb-8">
-      <div class="mb-4">
+      <!-- Password reset works by email, which the desktop app doesn't send. -->
+      <div v-if="!isDesktop" class="mb-4">
         <router-link
           to="forgot-password"
           class="text-sm text-primary-400 hover:text-gray-700"
@@ -71,6 +72,9 @@ import { useVuelidate } from '@vuelidate/core'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/scripts/admin/stores/auth'
 import { handleError } from '@/scripts/helpers/error-handling'
+import { isDesktopApp } from '@/scripts/helpers/app-mode'
+
+const isDesktop = isDesktopApp()
 
 const notificationStore = useNotificationStore()
 const authStore = useAuthStore()

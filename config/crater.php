@@ -15,6 +15,26 @@ use Crater\Models\TaxType;
 return [
 
     /*
+    * How the app is deployed: "web" (a server) or "desktop" (the offline desktop app, which
+    * sets APP_MODE=desktop). Desktop mode hides features that need the internet, a mail
+    * server or a server customers can reach; their backend stays in place for web installs.
+    */
+    'mode' => env('APP_MODE', 'web'),
+
+    /*
+    * Menu links left out of the menus in desktop mode.
+    */
+    'desktop_hidden_links' => [
+        '/admin/modules',
+        '/admin/settings/exchange-rate-provider',
+        '/admin/settings/notifications',
+        '/admin/settings/mail-configuration',
+        '/admin/settings/file-disk',
+        '/admin/settings/backup',
+        '/admin/settings/update-app',
+    ],
+
+    /*
     * Minimum php version.
     */
     'min_php_version' => '7.4.0',

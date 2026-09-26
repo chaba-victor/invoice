@@ -4,7 +4,7 @@
     <BasePageHeader :title="pageTitle">
       <template #actions>
         <BaseButton
-          v-if="userStore.hasAbilities(abilities.SEND_PAYMENT)"
+          v-if="userStore.hasAbilities(abilities.SEND_PAYMENT) && !isDesktop"
           :content-loading="isFetching"
           variant="primary"
           @click="onPaymentSend"
@@ -265,6 +265,9 @@ import SendPaymentModal from '@/scripts/admin/components/modal-components/SendPa
 import LoadingIcon from '@/scripts/components/icons/LoadingIcon.vue'
 
 import abilities from '@/scripts/admin/stub/abilities'
+import { isDesktopApp } from '@/scripts/helpers/app-mode'
+
+const isDesktop = isDesktopApp()
 
 const route = useRoute()
 

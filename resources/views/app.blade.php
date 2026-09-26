@@ -24,6 +24,10 @@
         <link rel="stylesheet" href="/modules/styles/{{ $name }}">
     @endforeach
 
+    <script>
+        window.app_mode = @json(config('crater.mode'));
+    </script>
+
     @vite
 </head>
 

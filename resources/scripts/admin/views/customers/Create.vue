@@ -162,9 +162,9 @@
 
         <BaseDivider class="mb-5 md:mb-8" />
 
-        <!-- Portal Access-->
+        <!-- Portal Access (hidden in the desktop app, which customers can't reach) -->
 
-        <div class="grid grid-cols-5 gap-4 mb-8">
+        <div v-if="!isDesktop" class="grid grid-cols-5 gap-4 mb-8">
           <h6 class="col-span-5 text-lg font-semibold text-left lg:col-span-1">
             {{ $t('customers.portal_access') }}
           </h6>
@@ -259,7 +259,7 @@
           </BaseInputGrid>
         </div>
 
-        <BaseDivider class="mb-5 md:mb-8" />
+        <BaseDivider v-if="!isDesktop" class="mb-5 md:mb-8" />
 
         <!-- Billing Address   -->
         <div class="grid grid-cols-5 gap-4 mb-8">
@@ -601,6 +601,9 @@ import CustomerCustomFields from '@/scripts/admin/components/custom-fields/Creat
 import { useGlobalStore } from '@/scripts/admin/stores/global'
 import CopyInputField from '@/scripts/admin/components/CopyInputField.vue'
 import { useCompanyStore } from '@/scripts/admin/stores/company'
+import { isDesktopApp } from '@/scripts/helpers/app-mode'
+
+const isDesktop = isDesktopApp()
 
 const customerStore = useCustomerStore()
 const customFieldStore = useCustomFieldStore()

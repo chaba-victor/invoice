@@ -9,7 +9,7 @@
 
     <!-- Copy PDF url  -->
     <BaseDropdownItem
-      v-if="route.name === 'estimates.view'"
+      v-if="route.name === 'estimates.view' && !isDesktop"
       @click="copyPdfUrl"
     >
       <BaseIcon
@@ -95,7 +95,8 @@
       v-if="
         row.status !== 'SENT' &&
         route.name !== 'estimates.view' &&
-        userStore.hasAbilities(abilities.SEND_ESTIMATE)
+        userStore.hasAbilities(abilities.SEND_ESTIMATE) &&
+        !isDesktop
       "
       @click="sendEstimate(row)"
     >
@@ -107,7 +108,10 @@
     </BaseDropdownItem>
 
     <!-- Resend Estimate -->
-    <BaseDropdownItem v-if="canResendEstimate(row)" @click="sendEstimate(row)">
+    <BaseDropdownItem
+      v-if="canResendEstimate(row) && !isDesktop"
+      @click="sendEstimate(row)"
+    >
       <BaseIcon
         name="PaperAirplaneIcon"
         class="w-5 h-5 mr-3 text-gray-400 group-hover:text-gray-500"
@@ -157,6 +161,9 @@ import { useDialogStore } from '@/scripts/stores/dialog'
 import { inject } from 'vue'
 import { useUserStore } from '@/scripts/admin/stores/user'
 import abilities from '@/scripts/admin/stub/abilities'
+import { isDesktopApp } from '@/scripts/helpers/app-mode'
+
+const isDesktop = isDesktopApp()
 
 const props = defineProps({
   row: {

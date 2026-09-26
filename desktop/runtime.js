@@ -51,6 +51,8 @@ function createRuntime({ appDir, phpDir, dataDir, version, dev, onServerExit }) 
     return {
       ...process.env,
       INVOICE_DATA_DIR: dataDir,
+      // Hides online-only features (see config/crater.php).
+      APP_MODE: 'desktop',
       APP_ENV: 'production',
       APP_DEBUG: dev ? 'true' : 'false',
       APP_URL: origin(),

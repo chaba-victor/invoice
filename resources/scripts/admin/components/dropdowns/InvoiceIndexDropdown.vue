@@ -22,7 +22,10 @@
     </router-link>
 
     <!-- Copy PDF url  -->
-    <BaseDropdownItem v-if="route.name === 'invoices.view'" @click="copyPdfUrl">
+    <BaseDropdownItem
+      v-if="route.name === 'invoices.view' && !isDesktop"
+      @click="copyPdfUrl"
+    >
       <BaseIcon
         name="LinkIcon"
         class="w-5 h-5 mr-3 text-gray-400 group-hover:text-gray-500"
@@ -48,7 +51,10 @@
     </router-link>
 
     <!-- Send Invoice Mail  -->
-    <BaseDropdownItem v-if="canSendInvoice(row)" @click="sendInvoice(row)">
+    <BaseDropdownItem
+      v-if="canSendInvoice(row) && !isDesktop"
+      @click="sendInvoice(row)"
+    >
       <BaseIcon
         name="PaperAirplaneIcon"
         class="w-5 h-5 mr-3 text-gray-400 group-hover:text-gray-500"
@@ -57,7 +63,10 @@
     </BaseDropdownItem>
 
     <!-- Resend Invoice -->
-    <BaseDropdownItem v-if="canReSendInvoice(row)" @click="sendInvoice(row)">
+    <BaseDropdownItem
+      v-if="canReSendInvoice(row) && !isDesktop"
+      @click="sendInvoice(row)"
+    >
       <BaseIcon
         name="PaperAirplaneIcon"
         class="w-5 h-5 mr-3 text-gray-400 group-hover:text-gray-500"
@@ -123,6 +132,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/scripts/admin/stores/user'
 import { inject } from 'vue'
 import abilities from '@/scripts/admin/stub/abilities'
+import { isDesktopApp } from '@/scripts/helpers/app-mode'
+
+const isDesktop = isDesktopApp()
 
 const props = defineProps({
   row: {

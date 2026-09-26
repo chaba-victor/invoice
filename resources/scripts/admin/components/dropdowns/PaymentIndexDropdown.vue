@@ -11,7 +11,8 @@
     <BaseDropdown-item
       v-if="
         route.name === 'payments.view' &&
-        userStore.hasAbilities(abilities.VIEW_PAYMENT)
+        userStore.hasAbilities(abilities.VIEW_PAYMENT) &&
+        !isDesktop
       "
       class="rounded-md"
       @click="copyPdfUrl"
@@ -59,7 +60,8 @@
       v-if="
         row.status !== 'SENT' &&
         route.name !== 'payments.view' &&
-        userStore.hasAbilities(abilities.SEND_PAYMENT)
+        userStore.hasAbilities(abilities.SEND_PAYMENT) &&
+        !isDesktop
       "
       @click="sendPayment(row)"
     >
@@ -94,6 +96,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { inject } from 'vue'
 import { useUserStore } from '@/scripts/admin/stores/user'
 import abilities from '@/scripts/admin/stub/abilities'
+import { isDesktopApp } from '@/scripts/helpers/app-mode'
+
+const isDesktop = isDesktopApp()
 
 const props = defineProps({
   row: {

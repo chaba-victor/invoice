@@ -21,7 +21,8 @@
         <BaseButton
           v-if="
             estimateData.status === 'DRAFT' &&
-            userStore.hasAbilities(abilities.SEND_ESTIMATE)
+            userStore.hasAbilities(abilities.SEND_ESTIMATE) &&
+            !isDesktop
           "
           :content-loading="isLoadingEstimate"
           variant="primary"
@@ -292,6 +293,9 @@ import SendEstimateModal from '@/scripts/admin/components/modal-components/SendE
 import LoadingIcon from '@/scripts/components/icons/LoadingIcon.vue'
 
 import abilities from '@/scripts/admin/stub/abilities'
+import { isDesktopApp } from '@/scripts/helpers/app-mode'
+
+const isDesktop = isDesktopApp()
 
 const modalStore = useModalStore()
 const estimateStore = useEstimateStore()

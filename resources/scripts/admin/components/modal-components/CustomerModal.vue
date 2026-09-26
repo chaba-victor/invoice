@@ -119,7 +119,7 @@
             </BaseInputGrid>
           </BaseTab>
 
-          <BaseTab :title="$t('customers.portal_access')">
+          <BaseTab v-if="!isDesktop" :title="$t('customers.portal_access')">
             <BaseInputGrid class="col-span-5 lg:col-span-4">
               <div class="md:col-span-2">
                 <p class="text-sm text-gray-500">
@@ -479,6 +479,9 @@ import { useInvoiceStore } from '@/scripts/admin/stores/invoice'
 import CopyInputField from '@/scripts/admin/components/CopyInputField.vue'
 import { useNotificationStore } from '@/scripts/stores/notification'
 import { useRecurringInvoiceStore } from '@/scripts/admin/stores/recurring-invoice'
+import { isDesktopApp } from '@/scripts/helpers/app-mode'
+
+const isDesktop = isDesktopApp()
 
 const recurringInvoiceStore = useRecurringInvoiceStore()
 const modalStore = useModalStore()
