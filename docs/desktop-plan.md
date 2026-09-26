@@ -4,7 +4,7 @@
 with no internet connection and no Docker. Everything (UI, API, database, PDFs) runs on the
 user's machine.
 
-**Last updated:** 2026-09-26 · **Current phase:** 5 — next up
+**Last updated:** 2026-09-26 · **Current phase:** 6 — next up (D12 open)
 
 ## How to use this document
 
@@ -27,34 +27,44 @@ user's machine.
 | D6 | **PHP 8.1 (NTS, x64)**, the newest version Laravel 8.83 supports. Upgrading Laravel is a separate, later project. | Locked |
 | D7 | **Keep the login screen** (single local user, "remember me" on). Protects data on a shared PC. | Locked |
 | D8 | **Email sending disabled** in offline mode; invoices/estimates/payments are downloaded as PDF or printed. | Locked |
-| D9 | **Per-user install** (NSIS, `%LOCALAPPDATA%\Programs\Invoice`), no admin rights needed. User data in `%APPDATA%\Invoice`. | Locked |
+| D9 | **Per-user install** (NSIS, `%LOCALAPPDATA%\Programs\Invoice`), no admin rights needed. User data in `%APPDATA%\Invoice\data` (see Target architecture). | Locked |
 | D10 | **Fixed local port** `127.0.0.1:8765`, falling back to a free port if taken. Data lives in SQLite, so a port change only costs the login session. | Locked |
-| D11 | **VC++ runtime deployed app-locally.** PHP needs `vcruntime140.dll`, `vcruntime140_1.dll`, `msvcp140.dll`, which a clean Windows may lack. Installing the VC++ redistributable needs admin (conflicts with D9), so the three DLLs ship next to `php.exe`, copied from the Visual Studio redist folder at build time. | Proposed — confirm |
+| D11 | **VC++ runtime deployed app-locally.** PHP needs `vcruntime140.dll`, `vcruntime140_1.dll`, `msvcp140.dll`, which a clean Windows may lack. Installing the VC++ redistributable needs admin (conflicts with D9), so the three DLLs ship next to `php.exe`, copied from the Visual Studio redist folder at build time. | Locked |
+| D12 | **Missed recurring invoices.** Crater generates them from cron timing only, so occurrences while the app is closed are skipped (and its `next_invoice_at` never advances past the first run, so it cannot detect them). Options: (a) on launch, generate one invoice per missed occurrence; (b) generate one invoice for the latest missed occurrence; (c) keep upstream behaviour (only while open). | **Open — needs decision** |
 
 ---
 
 ## Target architecture
 
 ```
-Invoice.exe (Electron main process)
- ├─ single-instance lock
- ├─ first run: create user-data dirs, write .env, generate APP_KEY
- ├─ every launch: back up DB → php artisan migrate --force
- ├─ spawns: resources/php/php.exe -S 127.0.0.1:8765 server.php   (cwd = resources/app)
- ├─ every 60s while open: php artisan schedule:run
- └─ BrowserWindow → http://127.0.0.1:8765/admin   (webSecurity on, external links → system browser)
+Invoice.exe (Electron main process — desktop/main.js, desktop/runtime.js)
+ ├─ single-instance lock; splash while starting
+ ├─ first run: create data dir, write .env (APP_KEY only)
+ ├─ every launch: kill orphaned php.exe (PID file) → pick port 8765+ → clear config/route cache
+ │   → back up DB if the app version changed → php artisan desktop:provision
+ │     (create DB, migrate, catch-up status checks, config/route cache)
+ ├─ spawns: resources/php/php.exe -S 127.0.0.1:<port> -t public server.php   (cwd = resources/app)
+ │   env per process: INVOICE_DATA_DIR, APP_URL, DB_DATABASE, drivers — not written to .env
+ ├─ at the start of every minute while open: php artisan schedule:run
+ └─ BrowserWindow → http://127.0.0.1:<port>/admin/dashboard   (sandboxed; external links → system browser)
 
 resources/                       (install dir, read-only at runtime)
  ├─ app/        Laravel app + vendor (composer --no-dev), public/build from Vite
- └─ php/        portable PHP 8.1 + php.ini
+ └─ php/        portable PHP 8.1 + php.ini + VC++ runtime DLLs
 
-%APPDATA%\Invoice\               (user data, survives upgrades/uninstall)
- ├─ .env
- ├─ database.sqlite
- ├─ storage/    app/ (media, receipts, logos), fonts/ (dompdf), framework/, logs/
- ├─ cache/      Laravel bootstrap caches (config, routes, services, packages)
- └─ backups/    automatic pre-migration + manual backups
+%APPDATA%\Invoice\               (Electron/Chromium profile: cookies, cache)
+ └─ data\                        (app data — survives upgrades/uninstall)
+    ├─ .env                      APP_KEY
+    ├─ database.sqlite
+    ├─ storage/                  app/ (media, receipts, logos), fonts/ (dompdf), framework/, logs/
+    ├─ cache/                    Laravel bootstrap caches (config, routes, services, packages)
+    ├─ backups/                  automatic pre-upgrade backups (Phase 8 adds manual ones)
+    ├─ desktop-state.json        last started version
+    └─ php-server.pid
 ```
+
+The app data lives in a `data` subfolder because Chromium keeps a `Cache` folder in the Electron profile,
+which would collide with Laravel's `cache` on a case-insensitive file system.
 
 ---
 
@@ -187,30 +197,49 @@ Everything writable moves to the user-data dir, passed in by Electron as `INVOIC
 - **Sizes:** `build/php` 79 MB, staged app 86.5 MiB (vendor: `aws` 29 MB, `dompdf` 9 MB, `phpunit` 4 MB
   pulled in by a non-dev test-assertions package). Trimming belongs to Phase 9.
 
-## Phase 5 — Electron main process rewrite (`desktop/main.js`) ⬜
+## Phase 5 — Electron main process rewrite (`desktop/main.js`) ✅
 
-- [ ] Single-instance lock; second launch focuses the existing window.
-- [ ] Splash window while starting; error window with log path if startup fails.
-- [ ] First run: create data dirs, write `.env` from a template (`APP_ENV=production`, `APP_DEBUG=false`,
-      `APP_URL`, `SESSION_DRIVER=file`, `SANCTUM_STATEFUL_DOMAINS=127.0.0.1:<port>`, `MAIL_MAILER=log`),
-      generate `APP_KEY` (Node `crypto.randomBytes(32)`).
-- [ ] Every launch: copy `database.sqlite` to `backups/pre-migrate-<version>-<timestamp>.sqlite`
-      (keep last 5), then `php artisan migrate --force`, then `config:cache` / `route:cache`.
-- [ ] Run `php artisan desktop:provision` before the backup/migrate step.
-- [ ] Spawn PHP as `php.exe -c <php>/php.ini -d extension_dir=<php>/ext -d error_log=<data>/storage/logs/php.log …`
-      (absolute paths; see Phase 4). Dev mode adds `-d opcache.validate_timestamps=1` so code edits apply.
-- [ ] Start PHP server (`php -S 127.0.0.1:<port> -t public server.php`, cwd = app dir; `-t public` is needed so
-      static files resolve); poll until it answers; then load `/admin`.
-- [ ] Update `APP_URL` / `SANCTUM_STATEFUL_DOMAINS` in `.env` if the fallback port is used.
-- [ ] Scheduler: run `php artisan schedule:run` every 60 s while the app is open (replaces the Docker cron container).
-- [ ] Shutdown: kill PHP process tree on quit (`taskkill /pid <pid> /T /F` on Windows); handle PHP crash → offer restart.
-- [ ] Security: `webSecurity: true`, `contextIsolation: true`, `sandbox: true`; `setWindowOpenHandler` →
-      `shell.openExternal` for non-local URLs; block `will-navigate` away from the local origin.
-- [ ] Downloads: PDFs and backups go through a native save dialog (`will-download`). Printing via `webContents.print()`.
-      Note: Crater's PDF routes return a body starting with `HTTP/1.0 200 OK…` headers before `%PDF`
-      (`GeneratesPdfTrait` wraps a Response in a response — upstream behaviour). Viewers tolerate it;
-      saved files should be clean, so fix the trait when doing downloads.
-- [ ] Logs: Electron log + PHP stdout/stderr to `<data>/storage/logs/desktop.log`.
+Files: `desktop/main.js` (lifecycle, windows, security, downloads), `desktop/runtime.js` (data dir, PHP,
+provisioning, server, scheduler), `desktop/log.js`, `desktop/splash.html`.
+
+- [x] Single-instance lock; second launch focuses the existing window.
+- [x] Splash window while starting; startup failures show a dialog with the error and an "Open log folder" button.
+- [x] First run: create the data dir and write `.env` containing only a new `APP_KEY`. Everything derived
+      from paths or the port (`INVOICE_DATA_DIR`, `APP_URL`, `SANCTUM_STATEFUL_DOMAINS`, `DB_DATABASE`,
+      drivers, `MAIL_*=log`) is passed as environment to each PHP process instead — Laravel's env loading is
+      immutable, so these win over `.env`, and a port change or moved data dir needs no `.env` edits.
+- [x] Before migrating, back up the database when the app version differs from the last start
+      (`backups/pre-upgrade-<old>-to-<new>-<timestamp>.sqlite`, plus `-wal` if present; keep 5). Migrations
+      only change with a new version, so per-launch backups would just rotate useful ones out.
+- [x] `desktop:provision` now does everything before serving in one PHP process: create DB, `migrate --force`,
+      run `check:invoices:status` / `check:estimates:status` (scheduled at midnight upstream, when a desktop
+      app is usually closed; both idempotent), `config:cache`, `route:cache`. Electron deletes the cached
+      config/routes first so the current port and paths apply.
+- [x] PHP spawned with absolute `-c`, `-d extension_dir`, `-d error_log`; dev adds `opcache.validate_timestamps=1`.
+- [x] Server: `php -S 127.0.0.1:<port> -t public server.php`; waits for `/login` to answer; PID file written.
+- [x] Port: 8765, else the next free port up to 8784. Cookies are scoped by host, not port, so even a
+      fallback port keeps the login.
+- [x] Orphans: on start, a PID file pointing at a live `php.exe` is killed (PID reuse is checked via `tasklist`).
+- [x] Scheduler: `schedule:run` just after the start of every minute, never overlapping.
+- [x] Shutdown kills the PHP process tree (`taskkill /T /F`); an unexpected PHP exit shows a Restart/Quit dialog.
+- [x] Security: `contextIsolation`, `sandbox`, `webSecurity`, no Node in pages; `setWindowOpenHandler` allows
+      same-origin windows (PDF previews) and sends http(s)/mailto to the system browser, blocking other
+      schemes; off-origin navigation blocked; `<webview>` blocked; only the clipboard-write permission granted.
+- [x] Downloads always show a Save dialog; the empty window a `window.open` download leaves is closed.
+      PDFs render in Chromium's built-in viewer (which also prints), so no custom print command is needed.
+- [x] Fixed `GeneratesPdfTrait`: PDF bodies no longer start with HTTP headers.
+- [x] Logs: `<data>/storage/logs/desktop.log` (Electron + provisioning + non-routine PHP server output,
+      rotated at 5 MB), `php.log` (PHP errors), Laravel's daily logs.
+- [x] Window title pinned to "Invoice" (some pages have no `<title>`).
+- **Result:** tested in dev mode (`npm run desktop:start`) with a fresh data dir: cold first start with all
+  migrations ~4.5 s to ready, later starts ~4 s; login inside the Electron window; recurring invoice
+  (`* * * * *`) generated exactly once per minute by the scheduler; PDF preview window with the Chromium
+  viewer; report download → Save dialog → cancel; `file://` and unknown schemes blocked; no Node in
+  pages; single-instance; clean quit leaves no `php.exe`; orphaned `php.exe` on 8765 killed and port reused;
+  port 8765 held by something else → 8766 with the session intact; PHP killed mid-session → dialog →
+  Restart recovered; version change → pre-upgrade backup.
+- **Follow-ups:** report downloads are named `document.pdf` (upstream); packaged build needs
+  `build.files` to include `desktop/**` (Phase 9); D12 (missed recurring invoices).
 
 ## Phase 6 — First-run setup flow ⬜
 
@@ -323,3 +352,4 @@ Out of scope. Notes to carry forward:
 | 2026-09-26 | 2 | Offline layer removed (stores/auth/login/header restored to upstream, offline modules + `dexie` deleted, service worker retired). Create/edit flows verified for customer, item, invoice, estimate. |
 | 2026-09-26 | 3 | Data-dir support in `bootstrap/app.php`, SQLite connector (WAL, busy timeout) + foreign keys enabled, dompdf `chroot` includes storage, system file disks use current paths, `/storage` route, `desktop:provision`. Verified with read-only code in Docker; Pest 248/248. |
 | 2026-09-26 | 4 | Pinned PHP 8.1.34 + php.ini + app-local VC++ runtime (`desktop:fetch-php`), staged app with `--no-dev` Composer install (`desktop:stage`). Fixed IdeHelper provider and Windows cache-path bugs. Staged app verified natively on Windows end to end. |
+| 2026-09-26 | 5 | New Electron main process (`desktop/main.js`, `runtime.js`, `log.js`, `splash.html`): data dir + `.env`, pre-upgrade backups, provisioning, PHP server with orphan/port/crash handling, per-minute scheduler, sandboxed windows, downloads. PDF response fix. Verified in dev mode (see Phase 5 result). D11 locked; D12 raised. |

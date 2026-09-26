@@ -1,113 +1,260 @@
-const { app, BrowserWindow, Menu } = require('electron')
+const { app, BrowserWindow, Menu, dialog, session, shell } = require('electron')
 const path = require('path')
-const http = require('http')
-const fs = require('fs')
+const log = require('./log')
+const { createRuntime } = require('./runtime')
 
-let mainWindow
+const dev = !app.isPackaged
+const root = path.resolve(__dirname, '..')
 
-const MIME_TYPES = {
-  '.html': 'text/html',
-  '.js': 'text/javascript',
-  '.css': 'text/css',
-  '.json': 'application/json',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.svg': 'image/svg+xml',
-  '.ico': 'image/x-icon',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.ttf': 'font/ttf',
-  '.webmanifest': 'application/manifest+json',
-}
-
-function startLocalServer(callback) {
-  const publicDir = path.join(__dirname, '../public')
-
-  const server = http.createServer((req, res) => {
-    let reqUrl = req.url.split('?')[0]
-    let filePath = path.join(publicDir, reqUrl)
-
-    // Check if requested static file exists
-    if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-      filePath = path.join(publicDir, 'index.html')
+// Packaged: code and PHP ship as read-only resources; data lives per user. Electron keeps its own
+// Chromium data (including a "Cache" folder) in userData, so the app's data gets a subfolder.
+// Dev: the source tree, build/php and a local .desktop-data folder.
+const paths = dev
+  ? {
+      appDir: root,
+      phpDir: path.join(root, 'build', 'php'),
+      dataDir: path.join(root, '.desktop-data'),
+    }
+  : {
+      appDir: path.join(process.resourcesPath, 'app'),
+      phpDir: path.join(process.resourcesPath, 'php'),
+      dataDir: path.join(app.getPath('userData'), 'data'),
     }
 
-    const ext = path.extname(filePath).toLowerCase()
-    const contentType = MIME_TYPES[ext] || 'application/octet-stream'
+const icon = path.join(paths.appDir, 'public', 'favicons', 'android-chrome-512x512.png')
 
-    fs.readFile(filePath, (err, content) => {
-      if (err) {
-        res.writeHead(500)
-        res.end('Server Error')
-      } else {
-        res.writeHead(200, {
-          'Content-Type': contentType,
-          'Cache-Control': 'no-cache',
-        })
-        res.end(content, 'utf-8')
-      }
-    })
-  })
-
-  server.listen(0, '127.0.0.1', () => {
-    const port = server.address().port
-    console.log(`Invoice Desktop Server running on http://127.0.0.1:${port}`)
-    callback(`http://127.0.0.1:${port}`)
-  })
+const webPreferences = {
+  contextIsolation: true,
+  nodeIntegration: false,
+  sandbox: true,
+  webSecurity: true,
+  spellcheck: true,
 }
 
-function createWindow(url) {
+let runtime = null
+let mainWindow = null
+let splash = null
+let quitting = false
+
+function isAppUrl(url) {
+  try {
+    return runtime && runtime.origin && new URL(url).origin === runtime.origin
+  } catch (err) {
+    return false
+  }
+}
+
+function openExternal(url) {
+  try {
+    if (['https:', 'http:', 'mailto:'].includes(new URL(url).protocol)) {
+      shell.openExternal(url)
+      return
+    }
+  } catch (err) {
+    // Not a URL.
+  }
+  log.info(`Blocked opening ${url}`)
+}
+
+function createSplash() {
+  const win = new BrowserWindow({
+    width: 420,
+    height: 260,
+    frame: false,
+    resizable: false,
+    center: true,
+    show: false,
+    icon,
+    webPreferences,
+  })
+  win.loadFile(path.join(__dirname, 'splash.html'))
+  win.once('ready-to-show', () => win.show())
+  return win
+}
+
+function setSplashStatus(text) {
+  if (splash && !splash.isDestroyed()) {
+    splash.webContents.executeJavaScript(`setStatus(${JSON.stringify(text)})`).catch(() => {})
+  }
+}
+
+function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 900,
     minHeight: 600,
     title: 'Invoice',
-    icon: path.join(__dirname, '../public/favicons/android-chrome-512x512.png'),
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      webSecurity: false,
-    },
+    show: false,
+    icon,
+    autoHideMenuBar: true,
+    webPreferences,
   })
 
-  // Remove standard window menu bar for clean native app appearance
-  Menu.setApplicationMenu(null)
+  // Some pages have no <title>, which would put the raw local URL in the title bar.
+  mainWindow.on('page-title-updated', (event) => event.preventDefault())
 
-  mainWindow.loadURL(url)
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show()
+    if (splash && !splash.isDestroyed()) {
+      splash.close()
+    }
+  })
 
+  // PDF previews open in child windows; closing the main window ends the app.
   mainWindow.on('closed', () => {
     mainWindow = null
+    app.quit()
+  })
+
+  mainWindow.loadURL(`${runtime.origin}/admin/dashboard`)
+}
+
+// Applies to every page the app shows: the main window, PDF windows and the splash.
+function secureWebContents(contents) {
+  contents.setWindowOpenHandler(({ url }) => {
+    if (isAppUrl(url)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: { width: 1000, height: 800, icon, autoHideMenuBar: true, webPreferences },
+      }
+    }
+    openExternal(url)
+    return { action: 'deny' }
+  })
+
+  contents.on('will-navigate', (event, url) => {
+    if (!isAppUrl(url)) {
+      event.preventDefault()
+      openExternal(url)
+    }
+  })
+
+  contents.on('will-attach-webview', (event) => event.preventDefault())
+}
+
+function configureSession() {
+  const ses = session.defaultSession
+
+  // Copying links to the clipboard is the only browser permission the app uses.
+  ses.setPermissionRequestHandler((contents, permission, callback, details) => {
+    callback(permission === 'clipboard-sanitized-write' && isAppUrl(details.requestingUrl))
+  })
+  ses.setPermissionCheckHandler((contents, permission, requestingOrigin) => {
+    return permission === 'clipboard-sanitized-write' && isAppUrl(requestingOrigin)
+  })
+
+  // Downloads (PDFs, reports) always ask where to save.
+  ses.on('will-download', (event, item, contents) => {
+    item.setSaveDialogOptions({ defaultPath: path.join(app.getPath('downloads'), item.getFilename()) })
+
+    const win = BrowserWindow.fromWebContents(contents)
+    item.once('done', (e, state) => {
+      log.info(`Download ${item.getFilename()}: ${state}`)
+      // A download opened with window.open leaves an empty child window behind.
+      if (win && win !== mainWindow && !win.isDestroyed() && ['', 'about:blank'].includes(contents.getURL())) {
+        win.close()
+      }
+    })
   })
 }
 
-app.whenReady().then(() => {
-  // If DESKTOP_APP_URL is specified (e.g. running against external server), use it.
-  // Otherwise start embedded local HTTP server for zero-dependency desktop execution.
-  if (process.env.DESKTOP_APP_URL) {
-    createWindow(process.env.DESKTOP_APP_URL)
-  } else {
-    startLocalServer((localUrl) => {
-      createWindow(localUrl)
-    })
+async function showFatalError(message, err) {
+  log.error(message, err)
+  const { response } = await dialog.showMessageBox({
+    type: 'error',
+    title: 'Invoice',
+    message,
+    detail: `${err && err.message ? err.message : err}\n\nThe log file has more detail: ${log.file}`,
+    buttons: ['Open log folder', 'Quit'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  })
+  if (response === 0) {
+    await shell.openPath(runtime ? runtime.logsDir : path.dirname(log.file))
+  }
+}
+
+async function onServerExit(code) {
+  // During startup, start() reports the failure.
+  if (quitting || !mainWindow) {
+    return
   }
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      if (process.env.DESKTOP_APP_URL) {
-        createWindow(process.env.DESKTOP_APP_URL)
-      } else {
-        startLocalServer((localUrl) => {
-          createWindow(localUrl)
-        })
-      }
-    }
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'error',
+    title: 'Invoice',
+    message: "Invoice's local server stopped unexpectedly.",
+    detail: `Exit code ${code}. Your data is safe; restart to continue.\n\nLog: ${log.file}`,
+    buttons: ['Restart', 'Quit'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
   })
-})
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (response !== 0) {
+    app.quit()
+    return
+  }
+
+  try {
+    await runtime.startServer()
+    mainWindow.reload()
+  } catch (err) {
+    await showFatalError('Invoice could not restart its local server.', err)
     app.quit()
   }
-})
+}
+
+async function start() {
+  log.init(path.join(paths.dataDir, 'storage', 'logs'))
+  log.info(`Invoice ${app.getVersion()} starting${dev ? ' (dev)' : ''}`, paths)
+
+  if (!dev) {
+    Menu.setApplicationMenu(null)
+  }
+
+  configureSession()
+  splash = createSplash()
+
+  runtime = createRuntime({ ...paths, version: app.getVersion(), dev, onServerExit })
+
+  try {
+    await runtime.prepare(setSplashStatus)
+    setSplashStatus('Starting…')
+    await runtime.startServer()
+    runtime.startScheduler()
+    createMainWindow()
+  } catch (err) {
+    // The splash stays open behind the dialog: closing the last window would quit the app first.
+    await showFatalError('Invoice could not start.', err)
+    app.quit()
+  }
+}
+
+if (!app.requestSingleInstanceLock()) {
+  // Another instance owns the data directory and the server; it focuses itself.
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+
+  app.on('web-contents-created', (event, contents) => secureWebContents(contents))
+
+  app.on('before-quit', () => {
+    quitting = true
+    if (runtime) {
+      runtime.stopScheduler()
+      runtime.stopServer()
+    }
+  })
+
+  app.on('window-all-closed', () => app.quit())
+
+  app.whenReady().then(start)
+}

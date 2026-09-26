@@ -26,10 +26,9 @@ trait GeneratesPdfTrait
 
         $pdf = $this->getPDFData();
 
-        return response()->make($pdf->stream(), 200, [
-            'Content-Type' => 'application/pdf',
-            'Content-Disposition' => 'inline; filename="'.$this[$collection_name.'_number'].'.pdf"',
-        ]);
+        // stream() already returns a response with an inline PDF disposition; wrapping it in another
+        // response put its HTTP headers into the body ahead of the PDF data.
+        return $pdf->stream($this[$collection_name.'_number'].'.pdf');
     }
 
     public function getGeneratedPDF($collection_name)

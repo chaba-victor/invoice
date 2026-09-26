@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+  <title>Invoice</title>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    body {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+      background: #ffffff; color: #1f2937; user-select: none; -webkit-app-region: drag;
+      font: 14px/1.4 "Segoe UI", system-ui, sans-serif;
+    }
+    h1 { margin: 0; font-size: 26px; font-weight: 600; color: #5851d8; letter-spacing: -0.02em; }
+    .spinner {
+      width: 26px; height: 26px; border-radius: 50%;
+      border: 3px solid #e5e7eb; border-top-color: #5851d8; animation: spin 0.9s linear infinite;
+    }
+    #status { color: #6b7280; min-height: 1.4em; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <h1>Invoice</h1>
+  <div class="spinner"></div>
+  <div id="status">Starting…</div>
+  <script>
+    function setStatus(text) {
+      document.getElementById('status').textContent = text
+    }
+  </script>
+</body>
+</html>
