@@ -47,6 +47,10 @@ if ($dataDir = getenv('INVOICE_DATA_DIR')) {
     $app->useStoragePath($dataDir.'/storage');
     $app->useEnvironmentPath($dataDir);
 
+    // Laravel only treats cache paths starting with / or \ as absolute; Windows paths start
+    // with a drive letter and would otherwise be resolved under the install directory.
+    $app->addAbsoluteCachePathPrefix($dataDir);
+
     foreach ([
         'APP_CONFIG_CACHE' => 'config.php',
         'APP_ROUTES_CACHE' => 'routes-v7.php',

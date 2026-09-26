@@ -4,7 +4,7 @@
 with no internet connection and no Docker. Everything (UI, API, database, PDFs) runs on the
 user's machine.
 
-**Last updated:** 2026-09-26 · **Current phase:** 4 — next up
+**Last updated:** 2026-09-26 · **Current phase:** 5 — next up
 
 ## How to use this document
 
@@ -29,6 +29,7 @@ user's machine.
 | D8 | **Email sending disabled** in offline mode; invoices/estimates/payments are downloaded as PDF or printed. | Locked |
 | D9 | **Per-user install** (NSIS, `%LOCALAPPDATA%\Programs\Invoice`), no admin rights needed. User data in `%APPDATA%\Invoice`. | Locked |
 | D10 | **Fixed local port** `127.0.0.1:8765`, falling back to a free port if taken. Data lives in SQLite, so a port change only costs the login session. | Locked |
+| D11 | **VC++ runtime deployed app-locally.** PHP needs `vcruntime140.dll`, `vcruntime140_1.dll`, `msvcp140.dll`, which a clean Windows may lack. Installing the VC++ redistributable needs admin (conflicts with D9), so the three DLLs ship next to `php.exe`, copied from the Visual Studio redist folder at build time. | Proposed — confirm |
 
 ---
 
@@ -160,17 +161,31 @@ Everything writable moves to the user-data dir, passed in by Electron as `INVOIC
   traversal attempts 404) → customer + invoice → invoice PDF with the logo embedded. Every write landed in
   the data dir; no errors logged. Docker web install unaffected.
 
-## Phase 4 — Bundle the PHP runtime and the app ⬜
+## Phase 4 — Bundle the PHP runtime and the app ✅
 
-- [ ] `scripts/fetch-php.mjs`: download pinned PHP 8.1.x NTS x64 zip from windows.php.net, verify SHA-256,
-      extract to `build/php/`.
-- [ ] `build/php.ini`: enable `pdo_sqlite`, `sqlite3`, `mbstring`, `gd`, `zip`, `bcmath`, `exif`, `fileinfo`,
-      `intl`, `openssl`, `curl`; `memory_limit=512M`; `opcache` on; `display_errors=Off`.
-      Imagick is not needed (`config/image.php` and media-library can use `gd`).
-- [ ] `scripts/stage-app.mjs`: copy Laravel app into `build/stage/app/` (exclude `node_modules`, `tests`, `docker-compose`,
-      `uffizzi`, `.github`, `dist`, `_ide_helper.php`, `storage/*` except fonts), then
-      `composer install --no-dev --optimize-autoloader --classmap-authoritative` in the stage dir.
-- [ ] Smoke test: `build/php/php.exe -m` lists all required extensions; `php artisan --version` runs in stage.
+- [x] `scripts/fetch-php.mjs` (`npm run desktop:fetch-php`): downloads pinned PHP **8.1.34** NTS x64 (vs16)
+      from windows.php.net (falls back to `/archives/`), verifies SHA-256, extracts with Windows' `tar.exe`
+      to `build/php/`, installs `build/php.ini`, copies the VC++ runtime DLLs (D11). Zip cached in `build/cache/`.
+- [x] `build/php.ini`: `curl`, `exif`, `fileinfo`, `gd`, `intl`, `mbstring`, `openssl`, `pdo_sqlite`, `sodium`, `sqlite3`
+      as DLLs (`bcmath`, `zip`, `dom`, `tokenizer`, etc. are compiled in); OPcache on for CLI with
+      `validate_timestamps=0`; `memory_limit=512M`; uploads 50M; `display_errors=Off`; `date.timezone=UTC`.
+      **`extension_dir` must be passed as an absolute `-d` flag** — when unset, Windows PHP looks in
+      `C:phpext`, and a relative value resolves against the working directory.
+- [x] `scripts/stage-app.mjs` (`npm run desktop:stage`): copies an allow-list of runtime paths into
+      `build/stage/app/` (no Vue/Sass sources, tests, Docker, storage), downloads pinned Composer 2.10.3
+      (SHA-256 checked), runs `composer install --no-dev --no-scripts --classmap-authoritative` with the
+      bundled PHP, then `composer check-platform-reqs --no-dev` (all pass).
+- [x] Fixed: `config/app.php` registered `IdeHelperServiceProvider` (a `require-dev` package — upstream Crater
+      bug), so a `--no-dev` install crashed on boot. Removed; package discovery still loads it in dev.
+- [x] Fixed: Laravel 8 treats cache paths as absolute only if they start with `/` or ``, so `C:/…` cache
+      paths were resolved under the install dir. `bootstrap/app.php` registers the data dir via
+      `addAbsoluteCachePathPrefix()`.
+- [x] Smoke test: `php -m` loads every extension with no warnings. Staged app run **natively on Windows**
+      with the bundled PHP and a temp data dir: provision → migrate/seed → config/route cache in ~21 s;
+      `php -S` serving; login, logo upload, customer, invoice and invoice PDF (logo embedded) all work;
+      no log errors; nothing written inside the staged app.
+- **Sizes:** `build/php` 79 MB, staged app 86.5 MiB (vendor: `aws` 29 MB, `dompdf` 9 MB, `phpunit` 4 MB
+  pulled in by a non-dev test-assertions package). Trimming belongs to Phase 9.
 
 ## Phase 5 — Electron main process rewrite (`desktop/main.js`) ⬜
 
@@ -182,6 +197,8 @@ Everything writable moves to the user-data dir, passed in by Electron as `INVOIC
 - [ ] Every launch: copy `database.sqlite` to `backups/pre-migrate-<version>-<timestamp>.sqlite`
       (keep last 5), then `php artisan migrate --force`, then `config:cache` / `route:cache`.
 - [ ] Run `php artisan desktop:provision` before the backup/migrate step.
+- [ ] Spawn PHP as `php.exe -c <php>/php.ini -d extension_dir=<php>/ext -d error_log=<data>/storage/logs/php.log …`
+      (absolute paths; see Phase 4). Dev mode adds `-d opcache.validate_timestamps=1` so code edits apply.
 - [ ] Start PHP server (`php -S 127.0.0.1:<port> -t public server.php`, cwd = app dir; `-t public` is needed so
       static files resolve); poll until it answers; then load `/admin`.
 - [ ] Update `APP_URL` / `SANCTUM_STATEFUL_DOMAINS` in `.env` if the fallback port is used.
@@ -232,6 +249,9 @@ Data exists on one machine only, so this is required, not optional.
 
 ## Phase 9 — Packaging ⬜
 
+- [ ] Trim `build/php` (unused extension DLLs, `dev/`, `extras/`, `phpdbg`, `php-cgi` unless needed) and
+      consider dropping unused Composer packages (`aws/aws-sdk-php` + S3 flysystem, Dropbox) once Phase 7
+      has disabled remote disks.
 - [ ] `package.json` → move all frontend runtime libs from `dependencies` to `devDependencies`
       (Vite bundles them; today they add ~60 MB to `app.asar`). Electron main needs no runtime deps.
 - [ ] electron-builder config:
@@ -280,7 +300,8 @@ Out of scope. Notes to carry forward:
 
 | Risk | Impact | Mitigation |
 |------|--------|-----------|
-| PHP's built-in server handles one request at a time on Windows (`PHP_CLI_SERVER_WORKERS` is unsupported there). The UI fires parallel API calls. | Slower screens, especially PDFs. | Measure in Phase 5. If too slow, switch to `php-cgi.exe` behind a small bundled web server (e.g. Caddy) — isolated to `desktop/main.js`. |
+| PHP's built-in server handles one request at a time on Windows (`PHP_CLI_SERVER_WORKERS` is unsupported there). The UI fires parallel API calls. | Slower screens, especially PDFs. | **Largely retired in Phase 4:** natively, pages take ~60 ms, static files ~10 ms, an invoice PDF ~0.8 s. Re-check on a low-end machine in Phase 10; fallback remains `php-cgi.exe` behind a small bundled web server. |
+| Crater is AGPL-3.0. Distributing the app (modified) carries source-offer obligations. | Licensing compliance. | Ship `LICENSE` (staged) and provide the corresponding source (e.g. a public repo link in the app's About/installer) before distribution. |
 | PHP 8.1 is past end of security support. | Low exposure for a localhost-only app, but not zero. | Bind to `127.0.0.1` only; plan the Laravel upgrade separately (D6). |
 | Some migrations/queries may be MySQL-specific. | First-run or feature failures on SQLite. | Phase 3 full migrate + seed + smoke test on SQLite. |
 | Unsigned installer. | SmartScreen warning; users may not proceed. | Get a code-signing cert before distribution. |
@@ -301,3 +322,4 @@ Out of scope. Notes to carry forward:
 | 2026-09-26 | 1 | Vite config restored (`base`, `publicDir`), root-relative image URLs fixed, double `Crater.start()` removed, static `index.html` + NativePHP leftovers + `laravel-vite` npm package removed. Verified in Docker web app. |
 | 2026-09-26 | 2 | Offline layer removed (stores/auth/login/header restored to upstream, offline modules + `dexie` deleted, service worker retired). Create/edit flows verified for customer, item, invoice, estimate. |
 | 2026-09-26 | 3 | Data-dir support in `bootstrap/app.php`, SQLite connector (WAL, busy timeout) + foreign keys enabled, dompdf `chroot` includes storage, system file disks use current paths, `/storage` route, `desktop:provision`. Verified with read-only code in Docker; Pest 248/248. |
+| 2026-09-26 | 4 | Pinned PHP 8.1.34 + php.ini + app-local VC++ runtime (`desktop:fetch-php`), staged app with `--no-dev` Composer install (`desktop:stage`). Fixed IdeHelper provider and Windows cache-path bugs. Staged app verified natively on Windows end to end. |

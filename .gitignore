@@ -22,6 +22,7 @@ Homestead.yaml
 # Desktop build outputs
 /dist
 /build/php
+/build/cache
 /build/stage
 /public/build
 /.desktop-data

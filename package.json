@@ -10,6 +10,8 @@
     "build": "vite build",
     "serve": "vite preview",
     "desktop:start": "electron .",
+    "desktop:fetch-php": "node scripts/fetch-php.mjs",
+    "desktop:stage": "node scripts/stage-app.mjs",
     "desktop:build": "electron-builder",
     "test": "eslint ./resources/scripts --ext .js,.vue"
   },
