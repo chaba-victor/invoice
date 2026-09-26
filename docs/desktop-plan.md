@@ -4,7 +4,7 @@
 with no internet connection and no Docker. Everything (UI, API, database, PDFs) runs on the
 user's machine.
 
-**Last updated:** 2026-09-26 · **Current phase:** 0 — not started
+**Last updated:** 2026-09-26 · **Current phase:** 2 — next up
 
 ## How to use this document
 
@@ -22,13 +22,13 @@ user's machine.
 | D1 | **Plan B: self-contained app.** Electron starts a bundled PHP runtime serving the Laravel app from `127.0.0.1`, backed by SQLite. | Locked |
 | D2 | **Purely offline.** No feature may require the internet to work. Online-only features are disabled, not left half-working. | Locked |
 | D3 | **Hybrid (hosted/sync) is out of scope.** It gets its own design later. We keep one seam for it: a single `APP_MODE` switch (see Phase 7). | Locked |
-| D4 | **Remove the browser-side offline layer** (Dexie/IndexedDB outbox, offline login bypass, service worker). With a local backend it's redundant, and it's buggy (see Phase 2). A future hybrid sync is designed server-side, not rebuilt from this. | Proposed — confirm |
+| D4 | **Remove the browser-side offline layer** (Dexie/IndexedDB outbox, offline login bypass, service worker). With a local backend it's redundant, and it's buggy (see Phase 2). A future hybrid sync is designed server-side, not rebuilt from this. | Locked |
 | D5 | **Drop NativePHP.** It requires Laravel 10+; this is Laravel 8. We use plain Electron + portable PHP. | Locked |
-| D6 | **PHP 8.1 (NTS, x64)**, the newest version Laravel 8.83 supports. Upgrading Laravel is a separate, later project. | Proposed — confirm |
-| D7 | **Keep the login screen** (single local user, "remember me" on). Protects data on a shared PC. | Proposed — confirm |
-| D8 | **Email sending disabled** in offline mode; invoices/estimates/payments are downloaded as PDF or printed. | Proposed — confirm |
-| D9 | **Per-user install** (NSIS, `%LOCALAPPDATA%\Programs\Invoice`), no admin rights needed. User data in `%APPDATA%\Invoice`. | Proposed — confirm |
-| D10 | **Fixed local port** `127.0.0.1:8765`, falling back to a free port if taken. Data lives in SQLite, so a port change only costs the login session. | Proposed — confirm |
+| D6 | **PHP 8.1 (NTS, x64)**, the newest version Laravel 8.83 supports. Upgrading Laravel is a separate, later project. | Locked |
+| D7 | **Keep the login screen** (single local user, "remember me" on). Protects data on a shared PC. | Locked |
+| D8 | **Email sending disabled** in offline mode; invoices/estimates/payments are downloaded as PDF or printed. | Locked |
+| D9 | **Per-user install** (NSIS, `%LOCALAPPDATA%\Programs\Invoice`), no admin rights needed. User data in `%APPDATA%\Invoice`. | Locked |
+| D10 | **Fixed local port** `127.0.0.1:8765`, falling back to a free port if taken. Data lives in SQLite, so a port change only costs the login session. | Locked |
 
 ---
 
@@ -57,28 +57,38 @@ resources/                       (install dir, read-only at runtime)
 
 ---
 
-## Phase 0 — Groundwork ⬜
+## Phase 0 — Groundwork ✅
 
-- [ ] `git init`, first commit of the current state (baseline to diff against).
-- [ ] `.gitignore`: add `/dist`, `/build/php`, `/build/stage`, `*.sqlite`.
-- [ ] Record baseline: installer size (118 MB today), `app.asar` size (61 MB).
+- [x] `git init`, first commit of the current state (baseline to diff against). Repo-local `core.autocrlf=false` and
+      `core.eol=lf` so Git keeps LF line endings (the Docker containers run these files on Linux).
+- [x] `.gitignore`: add `/dist`, `/build/php`, `/build/stage`, `/public/build`, `/.desktop-data`, `*.sqlite`.
+- [x] Record baseline: installer 118,574,015 bytes (113 MiB); `app.asar` 61,350,680 bytes (58.5 MiB).
 
-## Phase 1 — Undo the static-SPA approach and fix web regressions ⬜
+## Phase 1 — Undo the static-SPA approach and fix web regressions ✅
 
 The current build serves `public/` as static files from Electron. Laravel will serve the app again,
 so these pieces go.
 
-- [ ] `vite.config.ts`: set `publicDir: 'resources/static'` (fonts and `/img/*` currently 404 everywhere),
-      so `public/` stops being copied into `public/build/`.
-- [ ] Delete `public/index.html`, `public/build/index.html`, and the nested copies in `public/build/`
+- [x] `vite.config.ts`: set `publicDir: 'resources/static'` (fonts and `/img/*` were 404 everywhere),
+      so `public/` stops being copied into `public/build/`. Also restored `base: '/build/'` — without it,
+      route-chunk preloads (and their CSS) pointed at `/assets/...` and 404'd under Laravel.
+- [x] Replaced `new URL('/img/...', import.meta.url)` (resolves to the site root, 404) with
+      `` `${import.meta.env.BASE_URL}img/...` `` in 5 components, and a hard-coded
+      `http://localhost:3000/img/default-avatar.jpg` in `ModuleCard.vue`.
+- [x] Delete `public/index.html`, `public/build/index.html`, and the nested copies in `public/build/`
       (`index.php`, `sw.js`, `offline.html`, `.htaccess`, `web.config`, `robots.txt`, `favicons/`).
-- [ ] `resources/scripts/main.js`: remove the `window.Crater.start()` call; Blade already calls it
+- [x] `resources/scripts/main.js`: remove the `window.Crater.start()` call; Blade already calls it
       after module scripts register their booting callbacks.
-- [ ] Delete `config/nativephp.php` and `app/Providers/NativeAppServiceProvider.php`
+- [x] Delete `config/nativephp.php` and `app/Providers/NativeAppServiceProvider.php`
       (wrong namespace — autoload is `Crater\` — and never registered).
-- [ ] Remove unused `laravel-vite` npm devDependency if the PHP `@vite` directive works from the manifest alone;
-      otherwise keep and document why.
+- [x] Removed the `laravel-vite` npm package. The Blade `@vite` directive comes from the Composer package
+      `innocenzi/laravel-vite`, which only reads `public/build/manifest.json` — confirmed working.
 - **Done when:** `npm run build` then Docker web app loads with Poppins font and logos, no console errors, app mounts once.
+- **Result:** verified at `http://localhost/login` — one Vue app mounted, Poppins loaded from `/build/fonts/`,
+  all `/build/...` assets 200. Remaining console errors (service-worker registration, two 401s from
+  `hydrateReferenceData` before login) belong to Phase 2.
+- **Note:** `npm run desktop:start` / the current Electron build no longer show the UI (they relied on
+  `public/index.html`). Expected until Phase 5 replaces `desktop/main.js`.
 
 ## Phase 2 — Remove the browser-side offline layer ⬜
 
@@ -234,6 +244,7 @@ Out of scope. Notes to carry forward:
 | Some migrations/queries may be MySQL-specific. | First-run or feature failures on SQLite. | Phase 3 full migrate + seed + smoke test on SQLite. |
 | Unsigned installer. | SmartScreen warning; users may not proceed. | Get a code-signing cert before distribution. |
 | AV false positives on bundled `php.exe`. | App won't start. | Use official php.net binaries unmodified; test in Phase 10. |
+| Main JS bundle is ~10 MB (2.5 MB gzipped); Vite warns on chunk size. | Slower first paint, even from local disk. | Not blocking. Look at locales/vendor splitting after Phase 9. |
 | Long paths in `vendor/`. | Install failures on old Windows configs. | `--classmap-authoritative`, keep install path short; test in Phase 10. |
 
 ---
@@ -243,3 +254,6 @@ Out of scope. Notes to carry forward:
 | Date | Phase | Note |
 |------|-------|------|
 | 2026-09-26 | — | Plan created after gap investigation. Existing installer (`dist/Invoice Setup 1.0.0.exe`) serves `public/` statically with no backend; not usable. |
+| 2026-09-26 | — | Decisions D4, D6–D10 confirmed. |
+| 2026-09-26 | 0 | Git repo initialised, baseline commit, `.gitignore` updated, baseline sizes recorded. |
+| 2026-09-26 | 1 | Vite config restored (`base`, `publicDir`), root-relative image URLs fixed, double `Crater.start()` removed, static `index.html` + NativePHP leftovers + `laravel-vite` npm package removed. Verified in Docker web app. |

@@ -74,7 +74,7 @@
           :src="
             data.author_avatar
               ? data.author_avatar
-              : 'http://localhost:3000/img/default-avatar.jpg'
+              : defaultAvatar
           "
           alt=""
         />
@@ -126,6 +126,7 @@ import { useI18n } from 'vue-i18n'
 import { computed, onMounted, ref, watch, reactive } from 'vue'
 
 const { t } = useI18n()
+const defaultAvatar = `${import.meta.env.BASE_URL}img/default-avatar.jpg`
 const props = defineProps({
   data: {
     type: Object,

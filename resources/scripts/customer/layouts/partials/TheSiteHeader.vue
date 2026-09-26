@@ -232,7 +232,7 @@ const previewAvatar = computed(() => {
 })
 
 function getDefaultAvatar() {
-  const imgUrl = new URL('/img/default-avatar.jpg', import.meta.url)
+  const imgUrl = `${import.meta.env.BASE_URL}img/default-avatar.jpg`
   return imgUrl
 }
 

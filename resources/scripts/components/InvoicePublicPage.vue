@@ -94,7 +94,7 @@ const shareableLink = computed(() => {
 })
 
 function getLogo() {
-  const imgUrl = new URL('/img/crater-logo-gray.png', import.meta.url)
+  const imgUrl = `${import.meta.env.BASE_URL}img/crater-logo-gray.png`
   return imgUrl
 }
 

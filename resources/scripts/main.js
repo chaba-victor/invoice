@@ -21,4 +21,3 @@ syncManager.init()
 window.syncManager = syncManager
 
 window.Crater = new Crater()
-window.Crater.start()
