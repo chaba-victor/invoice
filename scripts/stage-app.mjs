@@ -83,7 +83,8 @@ async function ensureComposer() {
 }
 
 function copyApp() {
-  fs.rmSync(stageDir, { recursive: true, force: true })
+  // Retries cover brief locks from OneDrive sync or antivirus scanners on Windows.
+  fs.rmSync(stageDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 })
 
   for (const entry of INCLUDE) {
     const from = path.join(root, entry)

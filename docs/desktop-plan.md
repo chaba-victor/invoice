@@ -4,7 +4,7 @@
 with no internet connection and no Docker. Everything (UI, API, database, PDFs) runs on the
 user's machine.
 
-**Last updated:** 2026-09-26 · **Current phase:** 9 — next up
+**Last updated:** 2026-09-26 · **Current phase:** 10 — next up
 
 ## How to use this document
 
@@ -45,13 +45,14 @@ Invoice.exe (Electron main process — desktop/main.js, desktop/runtime.js)
  ├─ every launch: kill orphaned php.exe (PID file) → pick port 8765+ → clear config/route cache
  │   → back up DB if the app version changed → php artisan desktop:provision
  │     (create DB, migrate, catch-up status checks, config/route cache)
- ├─ spawns: resources/php/php.exe -S 127.0.0.1:<port> -t public server.php   (cwd = resources/app)
+ ├─ spawns: resources/php/php.exe -S 127.0.0.1:<port> -t public server.php   (cwd = resources/laravel)
  │   env per process: INVOICE_DATA_DIR, APP_URL, DB_DATABASE, drivers — not written to .env
  ├─ at the start of every minute while open: php artisan schedule:run
  └─ BrowserWindow → http://127.0.0.1:<port>/admin/dashboard   (sandboxed; external links → system browser)
 
 resources/                       (install dir, read-only at runtime)
- ├─ app/        Laravel app + vendor (composer --no-dev), public/build from Vite
+ ├─ app.asar    desktop/* (Electron main process, preloads, splash, reset window)
+ ├─ laravel/    Laravel app + vendor (composer --no-dev), public/build from Vite
  └─ php/        portable PHP 8.1 + php.ini + VC++ runtime DLLs
 
 %APPDATA%\Invoice\               (Electron/Chromium profile: cookies, cache)
@@ -178,7 +179,8 @@ Everything writable moves to the user-data dir, passed in by Electron as `INVOIC
 - [x] `scripts/fetch-php.mjs` (`npm run desktop:fetch-php`): downloads pinned PHP **8.1.34** NTS x64 (vs16)
       from windows.php.net (falls back to `/archives/`), verifies SHA-256, extracts with Windows' `tar.exe`
       to `build/php/`, installs `build/php.ini`, copies the VC++ runtime DLLs (D11). Zip cached in `build/cache/`.
-- [x] `build/php.ini`: `curl`, `exif`, `fileinfo`, `gd`, `intl`, `mbstring`, `openssl`, `pdo_sqlite`, `sodium`, `sqlite3`
+- [x] `build/php.ini`: `curl`, `exif`, `fileinfo`, `gd`, `mbstring`, `openssl`, `pdo_sqlite`, `sodium`, `sqlite3`
+      (`intl` dropped in Phase 9: nothing uses it and Crater's own Docker image never had it)
       as DLLs (`bcmath`, `zip`, `dom`, `tokenizer`, etc. are compiled in); OPcache on for CLI with
       `validate_timestamps=0`; `memory_limit=512M`; uploads 50M; `display_errors=Off`; `date.timezone=UTC`.
       **`extension_dir` must be passed as an absolute `-d` flag** — when unset, Windows PHP looks in
@@ -350,25 +352,42 @@ Data exists on one machine only, so this is required, not optional.
   → window over the running app; validation messages; reset → confirmation → sign-in with the new password;
   the password does not appear in any log; cold start with the flag → reset window first, cancel → app opens.
 
-## Phase 9 — Packaging ⬜
+## Phase 9 — Packaging ✅
 
-- [ ] Trim `build/php` (unused extension DLLs, `dev/`, `extras/`, `phpdbg`, `php-cgi` unless needed) and
-      consider dropping unused Composer packages (`aws/aws-sdk-php` + S3 flysystem, Dropbox) once Phase 7
-      has disabled remote disks.
-- [ ] `package.json` → move all frontend runtime libs from `dependencies` to `devDependencies`
-      (Vite bundles them; today they add ~60 MB to `app.asar`). Electron main needs no runtime deps.
-- [ ] electron-builder config:
-  - `files`: `desktop/**` only.
-  - `extraResources`: `build/stage/app` → `app`, `build/php` → `php` (PHP can't read inside `app.asar`).
-  - `win.icon`: `build/icon.ico` (256×256, from `public/favicons/android-chrome-512x512.png`).
-  - `nsis`: `oneClick: false`, `perMachine: false`, `allowToChangeInstallationDirectory: true`,
-    desktop + Start Menu shortcuts.
-- [ ] Scripts: `desktop:prepare` = `vite build` → `fetch-php` → `stage-app`; `desktop:build` = `desktop:prepare` → `electron-builder`.
-- [ ] Dev mode: `desktop:start` uses the source tree + `build/php` with `INVOICE_DATA_DIR=./.desktop-data`.
-- [ ] Start-menu shortcut "Reset Invoice password" → `Invoice.exe --reset-password` (D13), via an NSIS include.
-- [ ] `build.files` must include `desktop/**` (main, runtime, log, preloads, splash and reset pages).
-- [ ] Code signing: ⏸ until a certificate is available (SmartScreen will warn until then).
-- [ ] macOS / Linux targets: ⏸ (README updated to say Windows only for now).
+- [x] `build/php` trimmed in `fetch-php.mjs` by allow-list: `php.exe`, `php8.dll`, `license.txt`, the VC++ runtime,
+      the extension DLLs `php.ini` enables (read from the file) and their DLLs. `intl` removed (its ICU data alone
+      is 35 MB; unused — Crater's Docker image never had it). **79 MB → 36 MB.** If `php.ini` enables an
+      extension that was pruned, the script extracts PHP again.
+- [ ] Dropping unused Composer packages (AWS SDK 29 MB, Dropbox, Mockery/PHPUnit via a non-dev test package):
+      not done — backend infrastructure stays (D14).
+- [x] `package.json`: every frontend library moved to `devDependencies` (Vite bundles them), so `app.asar` holds
+      only `desktop/**` and `package.json` (44 KB; the August build's was 58.5 MB of node_modules).
+- [x] electron-builder config (`package.json` → `build`):
+  - `files`: `desktop/**/*`, `package.json`.
+  - `extraResources`: `build/stage/app` → `resources/laravel` (not `resources/app`: Electron looks for its own
+    code there before `app.asar`), `build/php` → `resources/php`.
+  - `win.icon`: `build/icon.png` (512×512, from `public/favicons`); electron-builder converts it.
+  - `nsis`: assisted installer, per-user, changeable directory, desktop + Start-menu shortcuts,
+    `deleteAppDataOnUninstall: false` (data in `%APPDATA%\Invoice\data` survives uninstall and upgrades).
+  - `electronLanguages: ['en-US']` (Chromium's own UI strings; 49 MB of other locales dropped),
+    `compression: maximum`.
+- [x] `build/installer.nsh`: "Reset Invoice password" Start-menu shortcut → `Invoice.exe --reset-password` (D13),
+      removed on uninstall.
+- [x] Scripts: `desktop:prepare` = `build` → `desktop:fetch-php` → `desktop:stage`; `desktop:build` = prepare →
+      `electron-builder --win --x64`.
+- [x] Dev mode: `desktop:start` runs the source tree with `build/php` and `.desktop-data` (since Phase 5).
+- [x] `stage-app.mjs` retries removing the old stage (OneDrive/antivirus locks).
+- [x] README rewritten for the desktop and web variants (Windows only for now).
+- [ ] Code signing: ⏸ until a certificate is available (SmartScreen will warn until then). electron-builder
+      logs "signing with signtool.exe" but nothing is signed without a certificate (checked).
+- [ ] macOS / Linux targets: ⏸.
+- **Result:** `npm run desktop:build` → `dist/Invoice Setup 1.0.0.exe` **127.4 MiB** (August: 113 MiB with no
+  backend). Unpacked: Electron 234 MB exe + support files, `resources/laravel` 113 MB (vendor 90 MB),
+  `resources/php` 36 MB. Packaged app (`dist/win-unpacked/Invoice.exe` with a scratch `--user-data-dir`):
+  first start provisions in ~3.5 s; 3-step onboarding → dashboard; logo, customer, invoice; PDF `%PDF-1.7` with
+  the logo; backup through Settings → Backup; `--reset-password` opens the reset window over the running
+  app; quit leaves no `php.exe`.
+- **Not yet run:** the NSIS installer itself (install, shortcuts, upgrade, uninstall) — Phase 10.
 
 ## Phase 10 — Verification ⬜
 
@@ -394,7 +413,7 @@ Run on a clean Windows 11 VM **with networking disabled**.
 - [ ] Uninstall: data dir remains; reinstall picks it up.
 - [ ] Install path with spaces and a OneDrive-synced user profile.
 - [ ] Windows Defender doesn't quarantine `php.exe`.
-- [ ] Installer size recorded vs. baseline.
+- [x] Installer size recorded vs. baseline (Phase 9: 127.4 MiB vs 113 MiB).
 
 ## Later — Hybrid / hosted version ⏸
 
@@ -439,3 +458,4 @@ Out of scope. Notes to carry forward:
 | 2026-09-26 | 7 | `APP_MODE=desktop`: online-only menus and actions hidden (updater, modules, exchange-rate providers, portal, email, cloud disks, Crater backup), Stripe package removed, 3-step installer progress. Backends untouched (D14). D13 raised. |
 | 2026-09-27 | 8 | Backup/restore (`desktop:backup`, `desktop:restore`, Settings → Backup page via a preload bridge), pre-restore safety copies, daily automatic snapshots, backup reminder. Verified end to end in the app. |
 | 2026-09-27 | D13 | Password reset window (`--reset-password`, `desktop:reset-password`). Verified from a running and a closed app. Start-menu shortcut left for Phase 9. |
+| 2026-09-27 | 9 | Installer builds with `npm run desktop:build` (127.4 MiB): trimmed PHP (79→36 MB), no node_modules in app.asar, Laravel as resources/laravel, per-user NSIS with the reset shortcut, en-US Chromium locale only. Packaged app verified from dist/win-unpacked. README updated. |

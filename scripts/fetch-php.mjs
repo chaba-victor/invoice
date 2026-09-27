@@ -96,12 +96,55 @@ function copyVcRuntime() {
   console.log(`VC++ runtime copied from ${source}`)
 }
 
+// The extension DLLs build/php.ini loads (e.g. "extension = gd" → php_gd.dll).
+function enabledExtensionDlls() {
+  const ini = fs.readFileSync(path.join(root, 'build', 'php.ini'), 'utf8')
+  return [...ini.matchAll(/^\s*(?:zend_)?extension\s*=\s*(\w+)/gm)].map((m) => `php_${m[1]}.dll`)
+}
+
+// Everything else in the root of the PHP zip: dev tools, other SAPIs, sample inis, and DLLs
+// only used by extensions the app doesn't load (intl's 35 MB of ICU, enchant, pgsql, ldap).
+const KEEP_ROOT = [
+  /^php\.exe$/,
+  /^php8\.dll$/,
+  /^php\.ini$/,
+  /^license\.txt$/,
+  /^\.version$/,
+  /^(vcruntime140|vcruntime140_1|msvcp140)\.dll$/,
+  /^lib(crypto|ssl)-[\w-]+\.dll$/, // openssl, curl
+  /^(libssh2|nghttp2)\.dll$/, // curl
+  /^libsqlite3\.dll$/, // pdo_sqlite, sqlite3
+  /^libsodium\.dll$/, // sodium
+]
+
+// Keeps only what the app runs: about a third of the PHP download.
+function prunePhp() {
+  const keepExt = enabledExtensionDlls()
+
+  for (const entry of fs.readdirSync(phpDir, { withFileTypes: true })) {
+    const full = path.join(phpDir, entry.name)
+    if (entry.isDirectory()) {
+      if (entry.name !== 'ext') fs.rmSync(full, { recursive: true, force: true })
+    } else if (!KEEP_ROOT.some((pattern) => pattern.test(entry.name))) {
+      fs.rmSync(full)
+    }
+  }
+
+  for (const dll of fs.readdirSync(path.join(phpDir, 'ext'))) {
+    if (!keepExt.includes(dll)) fs.rmSync(path.join(phpDir, 'ext', dll))
+  }
+}
+
 async function main() {
   const force = process.argv.includes('--force')
+  const current = fs.existsSync(markerPath) && fs.readFileSync(markerPath, 'utf8').trim() === PHP.version
+  // An extension newly enabled in php.ini may have been pruned earlier; extract again to get it.
+  const missingExtension = current && enabledExtensionDlls().some((dll) => !fs.existsSync(path.join(phpDir, 'ext', dll)))
 
-  if (!force && fs.existsSync(markerPath) && fs.readFileSync(markerPath, 'utf8').trim() === PHP.version) {
+  if (!force && current && !missingExtension) {
     fs.copyFileSync(path.join(root, 'build', 'php.ini'), path.join(phpDir, 'php.ini'))
     copyVcRuntime()
+    prunePhp()
     console.log(`PHP ${PHP.version} already in build/php (php.ini and VC++ runtime refreshed)`)
     return
   }
@@ -129,6 +172,7 @@ async function main() {
   fs.copyFileSync(path.join(root, 'build', 'php.ini'), path.join(phpDir, 'php.ini'))
   copyVcRuntime()
   fs.writeFileSync(markerPath, PHP.version + '\n')
+  prunePhp()
 
   console.log(`PHP ${PHP.version} extracted to build/php`)
 }

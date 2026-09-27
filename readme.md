@@ -1,76 +1,70 @@
-# Invoice - Offline-First Invoicing & Accounting PWA
+# Invoice - Invoicing & Accounting
 
-Invoice is a modern, open-source web, Progressive Web Application (PWA), and native desktop application designed to track expenses, payments, and create professional invoices and estimates.
+Invoice tracks customers, items, estimates, invoices, recurring invoices, payments and expenses, and produces PDF invoices, estimates, receipts and reports. It is based on [Crater](https://github.com/crater-invoice/crater) (Laravel 8 + Vue 3).
 
----
+It runs two ways from the same code:
 
-## 🌟 Key Features
-
-* **Offline-First Architecture**: Powered by **Dexie.js IndexedDB** and a background **Outbox Synchronization Engine**. Create Invoices, Customers, Items, and Estimates without an internet connection—all changes sync automatically when reconnected!
-* **Progressive Web App (PWA)**: Install directly from Chrome, Edge, or mobile browsers as a standalone application.
-* **Native Desktop App**: Packaged with **Electron** for cross-platform desktop execution (Windows, macOS, Linux).
-* **Multi-Company & Custom Currency**: Track multiple business entities with custom tax rates, currencies, and localized invoice templates.
-* **Payment Integration**: Stripe payment gateway support for online invoice settlement.
+* **Desktop app (Windows)** — installs like any Windows program and works fully offline. It bundles its own PHP and keeps all data in a local SQLite database.
+* **Web app** — a regular server install (Docker setup below), with email, the customer portal and the other online features.
 
 ---
 
-## 🚀 PWA & Offline Capabilities
+## 💻 Desktop App
 
-The application includes full offline client-side persistence and background synchronization:
+### What it includes
 
-* **Local Persistence**: Invoices, Customers, Items, and Estimates are stored directly in your browser's IndexedDB.
-* **Reference Data Hydration**: Reference lists (Active Customers & Line Items) are pre-fetched on application startup for instant offline availability.
-* **Outbox Engine**: Offline mutations are queued safely and dispatched sequentially to the server upon network reconnection.
-* **Real-time Status Badge**: Header indicator displays connection state (🟢 **Online**, 🟠 **Offline [N Pending]**, 🔵 **Syncing...**).
+* No internet, server or Docker needed. The installer contains Electron, a portable PHP 8.1 and the Laravel app.
+* Data lives in `%APPDATA%\Invoice\data` (database, logos, receipts, backups) and is kept when the app is uninstalled or updated.
+* **Settings → Backup** saves a backup file and restores one. A copy is also saved automatically once a day.
+* Recurring invoices that came due while the app was closed are created on the next start.
+* The **Reset Invoice password** Start-menu shortcut sets a new password, since the offline app can't send reset emails.
+* Features that need the internet or email (sending documents, customer portal, update checks, modules, online exchange rates, cloud storage) are hidden in the desktop app.
 
----
+### Building the installer
 
-## 💻 Running as a Native Desktop App
+Requirements: Windows 10/11 x64, Node.js 18+, internet access during the build (PHP and Composer packages are downloaded), and the Visual Studio 2019+ Build Tools (the build copies the Visual C++ runtime from them).
 
-Invoice can be run and built as a standalone desktop application using **Electron**.
-
-### Prerequisites
-Make sure you have Node.js (v16+) installed.
-
-### Development Mode
-Start the local Docker environment, then launch the Electron desktop window:
 ```bash
-# Start local containers
-docker compose up -d
-
-# Launch desktop app window
-npm run desktop:start
-```
-
-### Packaging Desktop Installers
-To build standalone executable installers (`.exe` for Windows, `.dmg` for macOS, `.AppImage` for Linux):
-```bash
+npm install
 npm run desktop:build
 ```
 
+This builds the frontend, downloads and trims PHP (`build/php`), stages the Laravel app with production dependencies (`build/stage/app`) and writes `dist/Invoice Setup <version>.exe`.
+
+### Running from source
+
+```bash
+npm install
+npm run build
+npm run desktop:fetch-php
+npm run desktop:start
+```
+
+`desktop:start` runs the app from the source tree with its data in `.desktop-data/`. The source tree needs its PHP dependencies installed in `vendor/` first (`composer install`).
+
+See [docs/desktop-plan.md](docs/desktop-plan.md) for how the desktop app is put together and what remains to be done.
+
 ---
 
-## 🛠️ Docker Quickstart
-
-To run Invoice in a containerized development environment:
+## 🛠️ Web App (Docker)
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-username/invoice.git
+git clone <repository-url> invoice
 cd invoice
 
 # 2. Start Docker containers
 docker compose up -d
 
 # 3. Compile frontend production assets
+npm install
 npm run build
 
-# 4. Access application shell
-# Open http://localhost in your browser
+# 4. Open http://localhost in your browser and follow the installer
 ```
 
 ---
 
 ## 📜 License
 
-Invoice is released under the **GNU AFFERO GENERAL PUBLIC LICENSE Version 3**. See [LICENSE](LICENSE) for details.
+Invoice is released under the **GNU AFFERO GENERAL PUBLIC LICENSE Version 3**. See [LICENSE](LICENSE) for details. If you distribute the desktop app, you must also offer its corresponding source code.

@@ -17,7 +17,8 @@ const paths = dev
       dataDir: path.join(root, '.desktop-data'),
     }
   : {
-      appDir: path.join(process.resourcesPath, 'app'),
+      // Not "app": Electron looks for its own code in resources/app before app.asar.
+      appDir: path.join(process.resourcesPath, 'laravel'),
       phpDir: path.join(process.resourcesPath, 'php'),
       dataDir: path.join(app.getPath('userData'), 'data'),
     }
