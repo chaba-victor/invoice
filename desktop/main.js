@@ -7,6 +7,13 @@ const { createRuntime } = require('./runtime')
 const dev = !app.isPackaged
 const root = path.resolve(__dirname, '..')
 
+// The app name comes from package.json productName, so the installed app's profile is
+// %APPDATA%\Invoice. Dev runs get their own profile (and single-instance lock) so they never
+// share cookies or the lock with an installed copy.
+if (dev) {
+  app.setPath('userData', path.join(app.getPath('appData'), 'Invoice (dev)'))
+}
+
 // Packaged: code and PHP ship as read-only resources; data lives per user. Electron keeps its own
 // Chromium data (including a "Cache" folder) in userData, so the app's data gets a subfolder.
 // Dev: the source tree, build/php and a local .desktop-data folder.

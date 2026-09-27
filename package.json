@@ -1,5 +1,6 @@
 {
   "name": "invoice-app",
+  "productName": "Invoice",
   "version": "1.0.0",
   "description": "Invoice - Offline-First Invoicing & Accounting Desktop Application",
   "author": "Invoice, Inc.",
