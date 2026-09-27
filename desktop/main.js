@@ -3,6 +3,7 @@ const fs = require('fs')
 const path = require('path')
 const log = require('./log')
 const { createRuntime } = require('./runtime')
+const { ensureAppExtracted, removeOtherCopies } = require('./unpack')
 
 const dev = !app.isPackaged
 const root = path.resolve(__dirname, '..')
@@ -24,13 +25,14 @@ const paths = dev
       dataDir: path.join(root, '.desktop-data'),
     }
   : {
-      // Not "app": Electron looks for its own code in resources/app before app.asar.
-      appDir: path.join(process.resourcesPath, 'laravel'),
+      // Set in start(): the app ships as resources/laravel.zip and runs from an extracted copy.
+      appDir: null,
       phpDir: path.join(process.resourcesPath, 'php'),
       dataDir: path.join(app.getPath('userData'), 'data'),
     }
 
-const icon = path.join(paths.appDir, 'public', 'favicons', 'android-chrome-512x512.png')
+// Packaged windows use the icon embedded in Invoice.exe.
+const icon = dev ? path.join(root, 'public', 'favicons', 'android-chrome-512x512.png') : undefined
 
 const webPreferences = {
   contextIsolation: true,
@@ -476,9 +478,18 @@ async function start() {
   configureSession()
   splash = createSplash()
 
-  runtime = createRuntime({ ...paths, version: app.getVersion(), dev, onServerExit })
-
   try {
+    if (!dev) {
+      paths.appDir = await ensureAppExtracted({
+        resourcesPath: process.resourcesPath,
+        phpDir: paths.phpDir,
+        onStatus: setSplashStatus,
+      })
+      log.info(`Running the app from ${paths.appDir}`)
+    }
+
+    runtime = createRuntime({ ...paths, version: app.getVersion(), dev, onServerExit })
+
     const report = await runtime.prepare(setSplashStatus)
     setSplashStatus('Starting…')
     await runtime.startServer()
@@ -498,6 +509,10 @@ async function start() {
 
     if (report.setupComplete) {
       runtime.autoBackup().catch((err) => log.error('Automatic backup failed', err))
+    }
+
+    if (!dev) {
+      removeOtherCopies(paths.appDir).catch((err) => log.error('Could not remove old app copies', err))
     }
   } catch (err) {
     // The splash stays open behind the dialog: closing the last window would quit the app first.

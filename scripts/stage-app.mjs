@@ -1,5 +1,6 @@
-// Copies the runtime parts of the Laravel app into build/stage/app and installs production
-// Composer dependencies there with the bundled PHP. Run `npm run build` and
+// Copies the runtime parts of the Laravel app into build/stage/app, installs production
+// Composer dependencies there with the bundled PHP, and packs the result into
+// build/stage/laravel.zip for the installer. Run `npm run build` and
 // `node scripts/fetch-php.mjs` first.
 // Usage: node scripts/stage-app.mjs
 
@@ -101,6 +102,24 @@ function copyApp() {
   }
 }
 
+// The installer ships the app as one zip: writing ~11,000 small files through NSIS took minutes,
+// while the app extracts one zip in seconds on first start (desktop/unpack.js).
+function packApp() {
+  const zip = path.join(root, 'build', 'stage', 'laravel.zip')
+  fs.rmSync(zip, { force: true })
+
+  // Windows' bundled bsdtar writes a zip when the name ends in .zip and -a is given.
+  const tar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+  execFileSync(tar, ['-a', '-c', '-f', zip, '-C', stageDir, '.'], { stdio: 'inherit' })
+
+  fs.writeFileSync(
+    path.join(root, 'build', 'stage', 'laravel.json'),
+    JSON.stringify({ sha256: sha256(zip), size: fs.statSync(zip).size }, null, 2) + '\n'
+  )
+
+  return zip
+}
+
 function dirSize(dir) {
   let total = 0
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -143,6 +162,9 @@ async function main() {
   php([composerPath, 'check-platform-reqs', '--no-dev', '--no-interaction'], stageDir)
 
   console.log(`Staged app: ${(dirSize(stageDir) / 1024 / 1024).toFixed(1)} MiB`)
+
+  const zip = packApp()
+  console.log(`Packed: build/stage/laravel.zip (${(fs.statSync(zip).size / 1024 / 1024).toFixed(1)} MiB)`)
 }
 
 main().catch((err) => {

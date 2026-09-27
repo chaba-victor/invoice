@@ -41,19 +41,22 @@ user's machine.
 ```
 Invoice.exe (Electron main process — desktop/main.js, desktop/runtime.js)
  ├─ single-instance lock; splash while starting
+ ├─ first start of a build: check and extract resources/laravel.zip → %LOCALAPPDATA%\Invoice\app\<hash>
  ├─ first run: create data dir, write .env (APP_KEY only)
  ├─ every launch: kill orphaned php.exe (PID file) → pick port 8765+ → clear config/route cache
  │   → back up DB if the app version changed → php artisan desktop:provision
  │     (create DB, migrate, catch-up status checks, config/route cache)
- ├─ spawns: resources/php/php.exe -S 127.0.0.1:<port> -t public server.php   (cwd = resources/laravel)
+ ├─ spawns: resources/php/php.exe -S 127.0.0.1:<port> -t public server.php   (cwd = the extracted copy)
  │   env per process: INVOICE_DATA_DIR, APP_URL, DB_DATABASE, drivers — not written to .env
  ├─ at the start of every minute while open: php artisan schedule:run
  └─ BrowserWindow → http://127.0.0.1:<port>/admin/dashboard   (sandboxed; external links → system browser)
 
 resources/                       (install dir, read-only at runtime)
  ├─ app.asar    desktop/* (Electron main process, preloads, splash, reset window)
- ├─ laravel/    Laravel app + vendor (composer --no-dev), public/build from Vite
+ ├─ laravel.zip Laravel app + vendor (composer --no-dev) + public/build, 27 MiB; laravel.json = its SHA-256
  └─ php/        portable PHP 8.1 + php.ini + VC++ runtime DLLs
+
+%LOCALAPPDATA%\Invoice\app\<hash>\ (extracted Laravel app, one per build, never written to; removed on uninstall)
 
 %APPDATA%\Invoice\               (Electron/Chromium profile: cookies, cache)
  └─ data\                        (app data — survives upgrades/uninstall)
@@ -364,8 +367,9 @@ Data exists on one machine only, so this is required, not optional.
       only `desktop/**` and `package.json` (44 KB; the August build's was 58.5 MB of node_modules).
 - [x] electron-builder config (`package.json` → `build`):
   - `files`: `desktop/**/*`, `package.json`.
-  - `extraResources`: `build/stage/app` → `resources/laravel` (not `resources/app`: Electron looks for its own
-    code there before `app.asar`), `build/php` → `resources/php`.
+  - `extraResources`: `build/stage/laravel.zip` + `laravel.json` → `resources/`, `build/php` → `resources/php`.
+    (First shipped as a `resources/laravel` folder — never `resources/app`, where Electron looks for its own code;
+    replaced by the zip in Phase 10, see below.)
   - `win.icon`: `build/icon.png` (512×512, from `public/favicons`); electron-builder converts it.
   - `nsis`: assisted installer, per-user, changeable directory, desktop + Start-menu shortcuts,
     `deleteAppDataOnUninstall: false` (data in `%APPDATA%\Invoice\data` survives uninstall and upgrades).
@@ -432,9 +436,15 @@ Run on a clean Windows 11 VM **with networking disabled**. ✔ = passed on the d
   profile `%APPDATA%\Invoice (dev)` so they never share cookies or the single-instance lock with an install.
 - **Install location:** a clean machine gets `%LOCALAPPDATA%\Programs\Invoice`; an upgrade reuses the
   previous location. The August build had been installed to `Programs\invoice-app`, so this machine kept that.
-- **Install/upgrade is slow: ~5 min install, ~6 min upgrade** (thousands of small PHP files, scanned by
-  Defender; the upgrade also removes the old files first). Uninstall ~40 s. Options for later: ship
-  Laravel as one archive unpacked on first start, or prune `vendor/` tests/docs.
+- **Fixed: install/upgrade took ~5–6 min** — NSIS writing (and on upgrade first deleting) ~11,200 small files.
+  Measured: writing them outside NSIS takes 15–22 s, deleting with `rmdir /s /q` 0.2 s, so NSIS was the cost.
+  Now `stage-app.mjs` packs the app into `laravel.zip` (27 MiB, SHA-256 in `laravel.json`); `desktop/unpack.js`
+  verifies and extracts it on the first start of each build (Windows `tar.exe`, bundled PHP as fallback) into
+  `%LOCALAPPDATA%\Invoice\app\<hash>` via a `.partial` folder renamed when complete, and removes other builds'
+  copies after start; the uninstaller removes them with `rmdir` except during upgrades (`installer.nsh`).
+  **Results: install 34 s (was ~5 min), upgrade 34 s (was ~6 min), uninstall 21 s (was ~40 s); first start
+  +21 s extraction behind the splash ("Preparing Invoice for first use…"), later starts unchanged (~3–4 s).**
+  Installed files: 45 (was ~11,200). Installer 129.4 MiB (+2 MiB: a deflated zip recompresses less).
 - Test tooling only: Git Bash rewrites `/S` to `S:/`, which starts the interactive installer; use
   `MSYS_NO_PATHCONV=1` (or PowerShell) for silent runs.
 ## Later — Hybrid / hosted version ⏸
@@ -482,3 +492,4 @@ Out of scope. Notes to carry forward:
 | 2026-09-27 | D13 | Password reset window (`--reset-password`, `desktop:reset-password`). Verified from a running and a closed app. Start-menu shortcut left for Phase 9. |
 | 2026-09-27 | 9 | Installer builds with `npm run desktop:build` (127.4 MiB): trimmed PHP (79→36 MB), no node_modules in app.asar, Laravel as resources/laravel, per-user NSIS with the reset shortcut, en-US Chromium locale only. Packaged app verified from dist/win-unpacked. README updated. |
 | 2026-09-27 | 10 | Installer tested on the dev machine: install, shortcuts, onboarding, reset shortcut, 1.0.0→1.0.1 upgrade with pre-upgrade backup, uninstall keeping data. Fixed the packaged profile/data folder (`productName`), separated the dev profile. Test data removed afterwards. Clean offline VM pass still to do. |
+| 2026-09-27 | 10 | Laravel ships as one verified zip extracted on first start per build: install 34 s (was ~5 min), upgrade 34 s (was ~6 min), uninstall 21 s. Tested install → first start → old-copy cleanup → 1.0.1 upgrade → uninstall on the dev machine; test data removed. |

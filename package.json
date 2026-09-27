@@ -31,8 +31,12 @@
     ],
     "extraResources": [
       {
-        "from": "build/stage/app",
-        "to": "laravel"
+        "from": "build/stage/laravel.zip",
+        "to": "laravel.zip"
+      },
+      {
+        "from": "build/stage/laravel.json",
+        "to": "laravel.json"
       },
       {
         "from": "build/php",

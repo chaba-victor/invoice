@@ -7,4 +7,14 @@
 
 !macro customUnInstall
   Delete "$SMPROGRAMS\Reset Invoice password.lnk"
+
+  ; The app runs from copies of resources\laravel.zip extracted to %LOCALAPPDATA%\Invoice\app
+  ; (desktop/unpack.js). Remove them on a real uninstall; an upgrade's new version cleans up
+  ; the old copy itself. rmdir is far faster than NSIS's RMDir /r for thousands of files.
+  ; User data lives in %APPDATA%\Invoice and is kept.
+  ${ifNot} ${isUpdated}
+    nsExec::Exec '"$SYSDIR\cmd.exe" /d /c rmdir /s /q "$LOCALAPPDATA\Invoice\app"'
+    Pop $0
+    RMDir "$LOCALAPPDATA\Invoice"
+  ${endIf}
 !macroend
