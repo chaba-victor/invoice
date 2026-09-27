@@ -1219,6 +1219,23 @@
       "update_failed_text": "Sorry! Your update failed on : {step} step",
       "update_warning": "All of the application files and default template files will be overwritten when you update the application using this utility. Please take a backup of your templates & database before updating."
     },
+    "desktop_backup": {
+      "title": "Backup & Restore",
+      "description": "Your data is stored only on this computer. Keep a recent backup somewhere else, such as a USB drive or a cloud folder, so you can recover it if this computer is lost or stops working.",
+      "backup_heading": "Back up",
+      "backup_help": "Saves your companies, customers, invoices, estimates, payments, expenses, logos and receipts into a single file.",
+      "backup_now": "Back up now",
+      "last_backup": "Last backup: {date}",
+      "never_backed_up": "You haven't saved a backup yet.",
+      "backup_saved": "Backup saved to {path}",
+      "restore_heading": "Restore",
+      "restore_help": "Replaces all current data with a backup file. Your current data is saved to the backups folder first.",
+      "restore": "Restore from backup…",
+      "automatic_heading": "Automatic backups",
+      "automatic_help": "Invoice also saves a copy once a day on this computer and keeps the last 7. They help after a mistake, but not if this computer is lost, so keep your own backups too.",
+      "last_automatic": "Last automatic backup: {date}",
+      "open_folder": "Open backups folder"
+    },
     "backup": {
       "title": "Backup | Backups",
       "description": "The backup is a zipfile that contains all files in the directories you specify along with a dump of your database",

@@ -51,11 +51,12 @@ class DesktopProvision extends Command
 
         $this->completeServerSetup();
 
-        if (Setting::getSetting('profile_complete') === 'COMPLETED') {
+        $setupComplete = Setting::getSetting('profile_complete') === 'COMPLETED';
+        $missed = null;
+
+        if ($setupComplete) {
             // Recurring invoices only run while the scheduler does, i.e. while the app is open.
-            // The launcher shows the user what this created (see desktop/runtime.js).
             $missed = RecurringInvoice::generateMissedInvoices();
-            $this->line('DESKTOP_REPORT '.json_encode(['missedRecurringInvoices' => $missed]));
 
             // Scheduled daily at midnight, when a desktop app is usually closed. Both are
             // idempotent, so run them on every start; after the catch-up so its invoices count.
@@ -65,6 +66,12 @@ class DesktopProvision extends Command
 
         $this->call('config:cache');
         $this->call('route:cache');
+
+        // Read by the launcher (desktop/runtime.js) to tell the user what happened.
+        $this->line('DESKTOP_REPORT '.json_encode([
+            'setupComplete' => $setupComplete,
+            'missedRecurringInvoices' => $missed,
+        ]));
 
         return 0;
     }

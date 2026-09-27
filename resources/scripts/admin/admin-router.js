@@ -1,4 +1,5 @@
 import abilities from '@/scripts/admin/stub/abilities'
+import { isDesktopApp } from '@/scripts/helpers/app-mode'
 
 const LayoutInstallation = () =>
   import('@/scripts/admin/layouts/LayoutInstallation.vue')
@@ -51,7 +52,10 @@ const MailConfig = () =>
   import('@/scripts/admin/views/settings/MailConfigSetting.vue')
 const FileDisk = () =>
   import('@/scripts/admin/views/settings/FileDiskSetting.vue')
-const Backup = () => import('@/scripts/admin/views/settings/BackupSetting.vue')
+// The desktop app backs up its local data itself instead of using Crater's server backups.
+const Backup = isDesktopApp()
+  ? () => import('@/scripts/admin/views/settings/DesktopBackupSetting.vue')
+  : () => import('@/scripts/admin/views/settings/BackupSetting.vue')
 const UpdateApp = () =>
   import('@/scripts/admin/views/settings/UpdateAppSetting.vue')
 const RolesSettings = () =>

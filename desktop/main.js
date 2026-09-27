@@ -1,4 +1,5 @@
-const { app, BrowserWindow, Menu, dialog, session, shell } = require('electron')
+const { app, BrowserWindow, Menu, dialog, ipcMain, session, shell } = require('electron')
+const fs = require('fs')
 const path = require('path')
 const log = require('./log')
 const { createRuntime } = require('./runtime')
@@ -88,7 +89,8 @@ function createMainWindow() {
     show: false,
     icon,
     autoHideMenuBar: true,
-    webPreferences,
+    // Only the main window gets the desktop bridge (backup and restore).
+    webPreferences: { ...webPreferences, preload: path.join(__dirname, 'preload.js') },
   })
 
   // Some pages have no <title>, which would put the raw local URL in the title bar.
@@ -159,8 +161,229 @@ function configureSession() {
   })
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000
+
+let resetWindow = null
+
+const wantsPasswordReset = (argv) => argv.includes('--reset-password')
+
+// D13: the "Reset Invoice password" shortcut runs Invoice.exe --reset-password, which opens
+// this window. Resolves once it closes.
+function openResetPasswordWindow() {
+  if (resetWindow) {
+    resetWindow.focus()
+    return Promise.resolve()
+  }
+
+  resetWindow = new BrowserWindow({
+    width: 480,
+    height: 540,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    title: 'Reset Invoice password',
+    icon,
+    parent: mainWindow || undefined,
+    modal: Boolean(mainWindow),
+    webPreferences: { ...webPreferences, preload: path.join(__dirname, 'reset-preload.js') },
+  })
+  resetWindow.setMenu(null)
+  resetWindow.loadFile(path.join(__dirname, 'reset-password.html'))
+
+  return new Promise((resolve) =>
+    resetWindow.on('closed', () => {
+      resetWindow = null
+      resolve()
+    })
+  )
+}
+
+// Asks where to save a backup and writes it. Used by Settings → Backup and the reminder.
+async function backupNow() {
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save backup',
+    defaultPath: path.join(app.getPath('documents'), `Invoice backup ${new Date().toISOString().slice(0, 10)}.zip`),
+    filters: [{ name: 'Invoice backup', extensions: ['zip'] }],
+  })
+  if (canceled || !filePath) {
+    return { canceled: true }
+  }
+
+  try {
+    const result = await runtime.createBackup(filePath)
+    runtime.writeState({ lastBackupAt: new Date().toISOString() })
+    log.info(`Backup saved to ${filePath}`)
+    return { ok: true, path: filePath, size: result.size }
+  } catch (err) {
+    log.error('Backup failed', err)
+    return { ok: false, error: err.message }
+  }
+}
+
+// Replaces all data with a backup chosen by the user, after checking it and asking to confirm.
+async function restoreFromBackup() {
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    title: 'Restore from backup',
+    filters: [{ name: 'Invoice backup', extensions: ['zip'] }],
+    properties: ['openFile'],
+  })
+  if (canceled || !filePaths.length) {
+    return { canceled: true }
+  }
+  const file = filePaths[0]
+
+  let manifest
+  try {
+    manifest = await runtime.inspectBackup(file)
+  } catch (err) {
+    await dialog.showMessageBox(mainWindow, {
+      type: 'error',
+      title: 'Invoice',
+      message: "This backup can't be restored.",
+      detail: err.message,
+      noLink: true,
+    })
+    return { ok: false, error: err.message }
+  }
+
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    title: 'Invoice',
+    message: 'Replace all current data with this backup?',
+    detail: [
+      `Backup made ${new Date(manifest.created_at).toLocaleString()}`,
+      `Company: ${(manifest.companies || []).join(', ') || '—'}`,
+      `Invoices: ${manifest.invoices}`,
+      '',
+      'Your current data is saved to the backups folder first. Invoice then restarts; if you are asked to sign in, use the account from the backup.',
+    ].join('\n'),
+    buttons: ['Restore', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    noLink: true,
+  })
+  if (response !== 0) {
+    return { canceled: true }
+  }
+
+  runtime.stopScheduler()
+  runtime.stopServer()
+  mainWindow.hide()
+  splash = createSplash()
+
+  let restoreError = null
+  try {
+    await runtime.restoreBackup(file, setSplashStatus)
+  } catch (err) {
+    restoreError = err
+    log.error('Restore failed', err)
+  }
+
+  try {
+    await runtime.startServer()
+    runtime.startScheduler()
+  } catch (err) {
+    await showFatalError('Invoice could not restart after restoring.', err)
+    app.quit()
+    return { ok: false }
+  }
+
+  mainWindow.loadURL(`${runtime.origin}/login`)
+  mainWindow.show()
+  splash.close()
+
+  if (restoreError) {
+    await dialog.showMessageBox(mainWindow, {
+      type: 'error',
+      title: 'Invoice',
+      message: 'The backup could not be restored.',
+      detail: `${restoreError.message}\n\nA copy of the data from before the restore is in the backups folder.`,
+      noLink: true,
+    })
+    return { ok: false, error: restoreError.message }
+  }
+  return { ok: true }
+}
+
+// Nudges towards a backup kept somewhere else: after the first week, if none in two weeks.
+async function remindToBackUp(setupComplete) {
+  const state = runtime.readState()
+  const now = Date.now()
+  if (
+    !setupComplete ||
+    now - Date.parse(state.firstStartedAt || new Date(now).toISOString()) < 7 * DAY_MS ||
+    (state.lastBackupAt && now - Date.parse(state.lastBackupAt) < 14 * DAY_MS) ||
+    (state.backupReminderSnoozedUntil && now < Date.parse(state.backupReminderSnoozedUntil))
+  ) {
+    return
+  }
+
+  const days = state.lastBackupAt ? Math.floor((now - Date.parse(state.lastBackupAt)) / DAY_MS) : null
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    title: 'Invoice',
+    message: days === null ? "You haven't saved a backup yet." : `Your last backup was ${days} days ago.`,
+    detail:
+      'Your data is stored only on this computer. Save a backup to a USB drive or a cloud folder so you can recover it if this computer is lost or stops working.',
+    buttons: ['Back up now', 'Remind me later'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  })
+
+  if (response === 0 && (await backupNow()).ok) {
+    return
+  }
+  runtime.writeState({ backupReminderSnoozedUntil: new Date(now + 7 * DAY_MS).toISOString() })
+}
+
+function registerDesktopBridge() {
+  // Only the main window, showing the local app, may use the bridge.
+  const handle = (channel, fn) =>
+    ipcMain.handle(channel, (event, ...args) => {
+      if (!mainWindow || event.sender !== mainWindow.webContents || !isAppUrl(event.senderFrame.url)) {
+        throw new Error('Not allowed')
+      }
+      return fn(...args)
+    })
+
+  // The password reset window has its own bridge (reset-preload.js) and sender check.
+  const handleReset = (channel, fn) =>
+    ipcMain.handle(channel, (event, ...args) => {
+      if (!resetWindow || event.sender !== resetWindow.webContents) {
+        throw new Error('Not allowed')
+      }
+      return fn(...args)
+    })
+
+  handleReset('reset:account', () => runtime.getOwnerAccount())
+  handleReset('reset:submit', async (password) => {
+    const result = await runtime.resetPassword(String(password))
+    if (result.ok) {
+      log.info('Owner password reset')
+      // The reset signs everyone out.
+      if (mainWindow) {
+        mainWindow.loadURL(`${runtime.origin}/login`)
+      }
+    }
+    return result
+  })
+  handleReset('reset:close', () => resetWindow && resetWindow.close())
+
+  handle('backup:info', () => {
+    const state = runtime.readState()
+    return { lastBackupAt: state.lastBackupAt || null, lastAutoBackupAt: state.lastAutoBackupAt || null }
+  })
+  handle('backup:create', backupNow)
+  handle('backup:restore', restoreFromBackup)
+  handle('backup:open-folder', () => {
+    fs.mkdirSync(runtime.backupsDir, { recursive: true })
+    return shell.openPath(runtime.backupsDir)
+  })
+}
+
 // D12: tell the user which recurring invoices were created for occurrences missed while closed.
-function showMissedRecurringInvoices(missed) {
+async function showMissedRecurringInvoices(missed) {
   const invoices = (missed && missed.invoices) || []
   const capped = (missed && missed.capped) || []
   if (!invoices.length && !capped.length) {
@@ -176,7 +399,7 @@ function showMissedRecurringInvoices(missed) {
   }
 
   const count = invoices.length
-  dialog.showMessageBox(mainWindow, {
+  await dialog.showMessageBox(mainWindow, {
     type: 'info',
     title: 'Invoice',
     message: `While Invoice was closed, ${count} recurring invoice${count === 1 ? ' was' : 's were'} due.`,
@@ -252,8 +475,22 @@ async function start() {
     setSplashStatus('Starting…')
     await runtime.startServer()
     runtime.startScheduler()
+    registerDesktopBridge()
+
+    if (wantsPasswordReset(process.argv)) {
+      await openResetPasswordWindow()
+    }
+
     createMainWindow()
-    mainWindow.once('ready-to-show', () => showMissedRecurringInvoices(report.missedRecurringInvoices))
+
+    mainWindow.once('ready-to-show', async () => {
+      await showMissedRecurringInvoices(report.missedRecurringInvoices)
+      await remindToBackUp(report.setupComplete)
+    })
+
+    if (report.setupComplete) {
+      runtime.autoBackup().catch((err) => log.error('Automatic backup failed', err))
+    }
   } catch (err) {
     // The splash stays open behind the dialog: closing the last window would quit the app first.
     await showFatalError('Invoice could not start.', err)
@@ -265,7 +502,11 @@ if (!app.requestSingleInstanceLock()) {
   // Another instance owns the data directory and the server; it focuses itself.
   app.quit()
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (event, argv) => {
+    if (wantsPasswordReset(argv) && mainWindow) {
+      openResetPasswordWindow()
+      return
+    }
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore()
       mainWindow.focus()

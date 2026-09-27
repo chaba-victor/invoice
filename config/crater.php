@@ -30,7 +30,6 @@ return [
         '/admin/settings/notifications',
         '/admin/settings/mail-configuration',
         '/admin/settings/file-disk',
-        '/admin/settings/backup',
         '/admin/settings/update-app',
     ],
 

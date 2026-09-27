@@ -12,6 +12,9 @@ const log = require('./log')
 // D10: a fixed port keeps the origin (and so the login session) stable; the rest are fallbacks.
 const PORTS = Array.from({ length: 20 }, (_, i) => 8765 + i)
 const KEEP_UPGRADE_BACKUPS = 5
+const KEEP_RESTORE_BACKUPS = 5
+const KEEP_AUTO_BACKUPS = 7
+const AUTO_BACKUP_INTERVAL_MS = 20 * 60 * 60 * 1000
 const SERVER_START_TIMEOUT_MS = 30000
 
 function createRuntime({ appDir, phpDir, dataDir, version, dev, onServerExit }) {
@@ -51,6 +54,7 @@ function createRuntime({ appDir, phpDir, dataDir, version, dev, onServerExit }) 
     return {
       ...process.env,
       INVOICE_DATA_DIR: dataDir,
+      INVOICE_APP_VERSION: version,
       // Hides online-only features (see config/crater.php).
       APP_MODE: 'desktop',
       APP_ENV: 'production',
@@ -70,10 +74,10 @@ function createRuntime({ appDir, phpDir, dataDir, version, dev, onServerExit }) 
     }
   }
 
-  function spawnPhp(args) {
+  function spawnPhp(args, extraEnv = {}) {
     return spawn(path.join(phpDir, 'php.exe'), phpArgs(args), {
       cwd: appDir,
-      env: phpEnv(),
+      env: { ...phpEnv(), ...extraEnv },
       windowsHide: true,
     })
   }
@@ -89,11 +93,11 @@ function createRuntime({ appDir, phpDir, dataDir, version, dev, onServerExit }) 
     stream.on('end', () => buffered.trim() && onLine(buffered))
   }
 
-  function artisan(args, { quiet } = {}) {
+  function artisan(args, { quiet, env } = {}) {
     return new Promise((resolve, reject) => {
       const label = args[0]
       const output = []
-      const proc = spawnPhp(['artisan', ...args, '--no-ansi'])
+      const proc = spawnPhp(['artisan', ...args, '--no-ansi'], env)
 
       const onLine = (line) => {
         output.push(line)
@@ -109,10 +113,36 @@ function createRuntime({ appDir, phpDir, dataDir, version, dev, onServerExit }) 
         if (code === 0) {
           resolve(output)
         } else {
-          reject(new Error(`php artisan ${args.join(' ')} exited with code ${code}\n${output.slice(-15).join('\n')}`))
+          const err = new Error(`php artisan ${args.join(' ')} exited with code ${code}\n${output.slice(-15).join('\n')}`)
+          err.output = output
+          reject(err)
         }
       })
     })
+  }
+
+  // The desktop:* commands print one "DESKTOP_REPORT {json}" line describing the outcome.
+  function parseReport(output) {
+    const line = (output || []).find((l) => l.startsWith('DESKTOP_REPORT '))
+    try {
+      return line ? JSON.parse(line.slice('DESKTOP_REPORT '.length)) : {}
+    } catch (err) {
+      log.error('Could not read a command report', err)
+      return {}
+    }
+  }
+
+  // Runs a desktop:* command and returns its report, including for failures it reported itself.
+  async function artisanReport(args, options) {
+    try {
+      return parseReport(await artisan(args, options))
+    } catch (err) {
+      const report = parseReport(err.output)
+      if (report.error) {
+        return report
+      }
+      throw err
+    }
   }
 
   function readState() {
@@ -121,6 +151,12 @@ function createRuntime({ appDir, phpDir, dataDir, version, dev, onServerExit }) 
     } catch (err) {
       return {}
     }
+  }
+
+  function writeState(changes) {
+    const state = { ...readState(), ...changes }
+    fs.writeFileSync(files.state, JSON.stringify(state, null, 2))
+    return state
   }
 
   function ensureDataDir() {
@@ -243,16 +279,10 @@ function createRuntime({ appDir, phpDir, dataDir, version, dev, onServerExit }) 
     onStatus('Updating the database…')
     const output = await artisan(['desktop:provision'])
 
-    fs.writeFileSync(files.state, JSON.stringify({ version, lastStartedAt: new Date().toISOString() }, null, 2))
+    const now = new Date().toISOString()
+    writeState({ version, lastStartedAt: now, firstStartedAt: readState().firstStartedAt || now })
 
-    // desktop:provision prints one "DESKTOP_REPORT {json}" line with what it did for the user.
-    const reportLine = output.find((line) => line.startsWith('DESKTOP_REPORT '))
-    try {
-      return reportLine ? JSON.parse(reportLine.slice('DESKTOP_REPORT '.length)) : {}
-    } catch (err) {
-      log.error('Could not read the provisioning report', err)
-      return {}
-    }
+    return parseReport(output)
   }
 
   function waitForServer(proc) {
@@ -354,16 +384,99 @@ function createRuntime({ appDir, phpDir, dataDir, version, dev, onServerExit }) 
     schedulerTimer = null
   }
 
+  function timestamp() {
+    return new Date().toISOString().replace(/[:.]/g, '-')
+  }
+
+  function pruneBackups(prefix, keep) {
+    const found = fs
+      .readdirSync(files.backups)
+      .filter((f) => f.startsWith(prefix) && f.endsWith('.zip'))
+      .sort()
+    for (const old of found.slice(0, Math.max(0, found.length - keep))) {
+      fs.rmSync(path.join(files.backups, old), { force: true })
+    }
+  }
+
+  // Backups are zips written by `php artisan desktop:backup` (app/Console/Commands/DesktopBackup.php).
+  async function createBackup(target) {
+    const report = await artisanReport(['desktop:backup', target])
+    if (!report.ok) {
+      throw new Error(report.error || 'The backup could not be written.')
+    }
+    return report
+  }
+
+  async function inspectBackup(file) {
+    const report = await artisanReport(['desktop:restore', file, '--inspect'])
+    if (!report.ok) {
+      throw new Error(report.error || 'This file could not be read.')
+    }
+    return report.manifest
+  }
+
+  // Replaces all data with a backup; the server and scheduler must be stopped first. The current
+  // data is saved to backups/ beforehand. Returns the provisioning report for the restored data.
+  async function restoreBackup(file, onStatus = () => {}) {
+    onStatus('Saving a copy of your current data…')
+    fs.mkdirSync(files.backups, { recursive: true })
+    const safety = path.join(files.backups, `pre-restore-${timestamp()}.zip`)
+    await createBackup(safety)
+    pruneBackups('pre-restore-', KEEP_RESTORE_BACKUPS)
+
+    onStatus('Restoring your backup…')
+    const report = await artisanReport(['desktop:restore', file])
+    if (!report.ok) {
+      throw new Error(report.error || 'The backup could not be restored.')
+    }
+    log.info(`Restored ${file}; the previous data is in backups/${path.basename(safety)}`)
+
+    return prepare(onStatus)
+  }
+
+  // A daily snapshot kept on this computer. It protects against mistakes and a damaged database,
+  // not against losing the computer; that's what the backup reminder is for.
+  async function autoBackup() {
+    if (Date.now() - Date.parse(readState().lastAutoBackupAt || 0) < AUTO_BACKUP_INTERVAL_MS) {
+      return
+    }
+    fs.mkdirSync(files.backups, { recursive: true })
+    const target = path.join(files.backups, `auto-${timestamp()}.zip`)
+    await createBackup(target)
+    writeState({ lastAutoBackupAt: new Date().toISOString() })
+    pruneBackups('auto-', KEEP_AUTO_BACKUPS)
+    log.info(`Automatic backup written to backups/${path.basename(target)}`)
+  }
+
+  // D13: password reset for the owner account (app/Console/Commands/DesktopResetPassword.php).
+  async function getOwnerAccount() {
+    return artisanReport(['desktop:reset-password', '--show'])
+  }
+
+  async function resetPassword(password) {
+    // Passed in the environment, never on the command line.
+    return artisanReport(['desktop:reset-password'], { env: { INVOICE_NEW_PASSWORD: password } })
+  }
+
   return {
     prepare,
     startServer,
+    getOwnerAccount,
+    resetPassword,
     stopServer,
     startScheduler,
     stopScheduler,
+    createBackup,
+    inspectBackup,
+    restoreBackup,
+    autoBackup,
+    readState,
+    writeState,
     get origin() {
       return port ? origin() : null
     },
     logsDir: files.logs,
+    backupsDir: files.backups,
   }
 }
 

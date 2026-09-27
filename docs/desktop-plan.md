@@ -4,7 +4,7 @@
 with no internet connection and no Docker. Everything (UI, API, database, PDFs) runs on the
 user's machine.
 
-**Last updated:** 2026-09-26 · **Current phase:** 8 — next up (D13 open)
+**Last updated:** 2026-09-26 · **Current phase:** 9 — next up
 
 ## How to use this document
 
@@ -31,7 +31,7 @@ user's machine.
 | D10 | **Fixed local port** `127.0.0.1:8765`, falling back to a free port if taken. Data lives in SQLite, so a port change only costs the login session. | Locked |
 | D11 | **VC++ runtime deployed app-locally.** PHP needs `vcruntime140.dll`, `vcruntime140_1.dll`, `msvcp140.dll`, which a clean Windows may lack. Installing the VC++ redistributable needs admin (conflicts with D9), so the three DLLs ship next to `php.exe`, copied from the Visual Studio redist folder at build time. | Locked |
 | D12 | **Missed recurring invoices: catch up (option a).** Crater generates recurring invoices only while its scheduler runs, so occurrences while the app is closed were skipped. At launch, the app generates one invoice per missed occurrence (dated when due) and lists them in a notice. See "D12 — Recurring invoice catch-up". | Locked |
-| D13 | **Password recovery.** "Forgot password" works by email, so it is hidden in the desktop app (D8) — which leaves a user who forgets their password locked out of their own data. Proposal: a "Reset Invoice password" Start-menu shortcut (`Invoice.exe --reset-password`) opens a small window to set a new password for the owner account. It needs access to the Windows account, which already gives access to the data files, so it keeps D7's protection against casual access. | **Open — needs decision** |
+| D13 | **Password recovery: "Reset Invoice password".** Email reset is unavailable offline (D8). `Invoice.exe --reset-password` (a Start-menu shortcut, Phase 9) opens a window that sets a new password for the owner account. It needs the Windows account that holds the data, which can already read the data files, so D7's protection against casual access is unchanged. See "D13 — Password reset". | Locked |
 | D14 | **Phase 7 hides, it doesn't remove.** Online-only features are hidden in the desktop UI; their backend (routes, controllers, packages) stays for web installs and a future hosted/hybrid version. | Locked |
 
 ---
@@ -308,14 +308,47 @@ the seam the hybrid work will use later. Per D14, features are hidden in the UI;
   automatically"; login without "Forgot Password?"; installer with 3 progress dots. The Docker web install
   still reports `web` and keeps all 16 settings entries. The network-off pass is part of Phase 10.
 
-## Phase 8 — Data safety ⬜
+## Phase 8 — Data safety ✅
 
 Data exists on one machine only, so this is required, not optional.
 
-- [ ] "Back up now": zip `database.sqlite` (via SQLite online backup / `VACUUM INTO`) + `storage/app` → save dialog.
-- [ ] "Restore": pick a backup zip → validate → stop PHP → swap in → migrate → restart.
-- [ ] Optional reminder if no backup in N days.
-- [ ] Uninstaller keeps `%APPDATA%\Invoice` (electron-builder default `deleteAppDataOnUninstall: false`); document it.
+- [x] Backup format: a zip with `manifest.json` (app/format/version, created_at, latest migration, company names,
+      invoice count), `database.sqlite` (a `VACUUM INTO` snapshot — consistent while the app runs), `.env` (APP_KEY)
+      and `storage/app/**` (logos, receipts, uploads). Written by `php artisan desktop:backup <path>` via a
+      `.partial` file that is renamed only when complete.
+- [x] `php artisan desktop:restore <path> [--inspect]`: refuses non-backups, other zips, backups from a newer
+      version (manifest format or a migration this app doesn't have) and entries with `..`/absolute paths;
+      extracts only the expected entries; checks `PRAGMA integrity_check`; disconnects before swapping (Windows
+      can't replace open files); replaces database, `storage/app` and `.env`.
+- [x] Desktop bridge: `desktop/preload.js` exposes four functions (`window.invoiceDesktop`) to the main window only;
+      `main.js` rejects calls from any other sender or origin.
+- [x] Settings → Backup shows `DesktopBackupSetting.vue` in desktop mode (Crater's server backup page stays for web):
+      last backup, "Back up now" (Save dialog, default `Documents\Invoice backup <date>.zip`), "Restore from
+      backup…", automatic backups + "Open backups folder".
+- [x] Restore: pick file → inspect → confirmation with backup date, company and invoice count → stop scheduler and
+      server → safety backup `backups/pre-restore-<ts>.zip` (keep 5) → restore → provision (migrates older
+      backups) → restart → `/login`. A failure restarts on the existing data and points to the safety copy.
+- [x] Automatic daily snapshot `backups/auto-<ts>.zip` after start (keep 7), once setup is complete.
+- [x] Reminder after the first week if no manual backup in 14 days: "Back up now" / "Remind me later" (7 days).
+- [ ] Uninstaller keeps `%APPDATA%\Invoice` (electron-builder default `deleteAppDataOnUninstall: false`) — Phase 9.
+- **Result:** commands tested directly (valid backup; non-zip, other zip, newer-version and path-traversal zips all
+  rejected with clear messages, nothing written). In the app: automatic backup on start; reminder shown and
+  snoozed; "Back up now" through the Save dialog → zip with database, `.env`, logo; a customer added afterwards;
+  restore through the Open dialog and confirmation → safety backup, restore, restart — the later customer gone,
+  earlier data and logo back; a non-backup zip → "This backup can't be restored", no changes.
+
+## D13 — Password reset ✅
+
+- [x] `php artisan desktop:reset-password [--show]`: resets the first company's owner; the new password comes from
+      `INVOICE_NEW_PASSWORD` (never the command line or logs); minimum 8 characters; clears the remember token and
+      all sessions. Refuses before setup is complete.
+- [x] `Invoice.exe --reset-password` opens `desktop/reset-password.html` (own preload, own sender check): shows the
+      account name and email, new password + confirmation. At startup it appears before the main window; if the
+      app is already open, the running instance opens it over the main window, which then returns to `/login`.
+- [ ] Start-menu shortcut "Reset Invoice password" — Phase 9 (NSIS).
+- **Result:** command tested (show, too short, reset + sessions cleared). In the app: second launch with the flag
+  → window over the running app; validation messages; reset → confirmation → sign-in with the new password;
+  the password does not appear in any log; cold start with the flag → reset window first, cancel → app opens.
 
 ## Phase 9 — Packaging ⬜
 
@@ -332,6 +365,8 @@ Data exists on one machine only, so this is required, not optional.
     desktop + Start Menu shortcuts.
 - [ ] Scripts: `desktop:prepare` = `vite build` → `fetch-php` → `stage-app`; `desktop:build` = `desktop:prepare` → `electron-builder`.
 - [ ] Dev mode: `desktop:start` uses the source tree + `build/php` with `INVOICE_DATA_DIR=./.desktop-data`.
+- [ ] Start-menu shortcut "Reset Invoice password" → `Invoice.exe --reset-password` (D13), via an NSIS include.
+- [ ] `build.files` must include `desktop/**` (main, runtime, log, preloads, splash and reset pages).
 - [ ] Code signing: ⏸ until a certificate is available (SmartScreen will warn until then).
 - [ ] macOS / Linux targets: ⏸ (README updated to say Windows only for now).
 
@@ -354,6 +389,8 @@ Run on a clean Windows 11 VM **with networking disabled**.
 - [ ] Recurring invoice is generated by the scheduler while the app is open.
 - [ ] Install version N+1 over N with a new migration: pre-migrate backup created, data intact.
 - [ ] Backup → wipe data dir → restore: data back.
+- [ ] Restore a backup made on another PC (different Windows user): sign-in with the backup's account works.
+- [ ] "Reset Invoice password" shortcut with the app closed and with it open.
 - [ ] Uninstall: data dir remains; reinstall picks it up.
 - [ ] Install path with spaces and a OneDrive-synced user profile.
 - [ ] Windows Defender doesn't quarantine `php.exe`.
@@ -400,3 +437,5 @@ Out of scope. Notes to carry forward:
 | 2026-09-26 | 6 | First-run flow: provisioning seeds and completes installer steps 1–5; wizard opens at the account step and signs itself in when resuming. Verified through all three steps to the dashboard. |
 | 2026-09-26 | D12 | Recurring invoice catch-up at launch (`last_run_at`, occurrence-dated invoices, notice), scheduler de-duplication, `next_invoice_at` fix. Verified incl. limits and re-launch. |
 | 2026-09-26 | 7 | `APP_MODE=desktop`: online-only menus and actions hidden (updater, modules, exchange-rate providers, portal, email, cloud disks, Crater backup), Stripe package removed, 3-step installer progress. Backends untouched (D14). D13 raised. |
+| 2026-09-27 | 8 | Backup/restore (`desktop:backup`, `desktop:restore`, Settings → Backup page via a preload bridge), pre-restore safety copies, daily automatic snapshots, backup reminder. Verified end to end in the app. |
+| 2026-09-27 | D13 | Password reset window (`--reset-password`, `desktop:reset-password`). Verified from a running and a closed app. Start-menu shortcut left for Phase 9. |
