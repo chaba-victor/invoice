@@ -1,11 +1,6 @@
 <template>
   <div class="flex flex-col items-center justify-between w-full pt-10">
-    <img
-      id="logo-crater"
-      src="/img/crater-logo.png"
-      alt="Invoice Logo"
-      class="h-12 mb-5 md:mb-10"
-    />
+    <MainLogo class="block w-48 h-auto mb-5 md:mb-10 text-primary-500" />
 
     <BaseWizard
       :steps="wizardSteps"
@@ -27,12 +22,14 @@ import Step5EmailConfig from './Step5EmailConfig.vue'
 import Step6AccountSettings from './Step6AccountSettings.vue'
 import Step7CompanyInfo from './Step7CompanyInfo.vue'
 import Step8CompanyPreferences from './Step8CompanyPreferences.vue'
+import MainLogo from '@/scripts/components/icons/MainLogo.vue'
 import { useInstallationStore } from '@/scripts/admin/stores/installation'
 import { useRouter } from 'vue-router'
 import { isDesktopApp } from '@/scripts/helpers/app-mode'
 
 export default {
   components: {
+    MainLogo,
     step_1: Step1RequirementsCheck,
     step_2: Step2PermissionCheck,
     step_3: Step3DatabaseConfig,
